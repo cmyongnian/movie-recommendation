@@ -3,60 +3,72 @@ from pathlib import Path
 
 import pandas as pd
 
-from .config import ITEM_COLUMNS, RATING_COLUMNS, USER_COLUMNS, 类型列
+from .config import GENRE_COLUMNS, ITEM_COLUMNS, RATING_COLUMNS, USER_COLUMNS
 
 
-def 解析电影名称与年份(电影名称原始: str):
-    if pd.isna(电影名称原始):
-        return "未知电影", None
-    匹配 = re.match(r"^(.*)\s\((\d{4})\)$", str(电影名称原始).strip())
-    if 匹配:
-        return 匹配.group(1).strip(), int(匹配.group(2))
-    return str(电影名称原始).strip(), None
+
+def parse_movie_title_and_year(movie_title_raw: str):
+    if pd.isna(movie_title_raw):
+        return "Unknown Movie", None
+
+    match = re.match(r"^(.*)\s\((\d{4})\)$", str(movie_title_raw).strip())
+    if match:
+        return match.group(1).strip(), int(match.group(2))
+    return str(movie_title_raw).strip(), None
 
 
-def 读取评分表(data_dir: Path) -> pd.DataFrame:
-    文件 = data_dir / "u.data"
-    return pd.read_csv(文件, sep="\t", header=None, names=RATING_COLUMNS, engine="python")
+
+def load_ratings(data_dir: Path) -> pd.DataFrame:
+    file_path = data_dir / "u.data"
+    return pd.read_csv(file_path, sep="\t", header=None, names=RATING_COLUMNS, engine="python")
 
 
-def 读取用户表(data_dir: Path) -> pd.DataFrame:
-    文件 = data_dir / "u.user"
-    return pd.read_csv(文件, sep="|", header=None, names=USER_COLUMNS, engine="python")
+
+def load_users(data_dir: Path) -> pd.DataFrame:
+    file_path = data_dir / "u.user"
+    return pd.read_csv(file_path, sep="|", header=None, names=USER_COLUMNS, engine="python")
 
 
-def 读取电影表(data_dir: Path) -> pd.DataFrame:
-    文件 = data_dir / "u.item"
-    电影表 = pd.read_csv(
-        文件,
+
+def load_items(data_dir: Path) -> pd.DataFrame:
+    file_path = data_dir / "u.item"
+    items_df = pd.read_csv(
+        file_path,
         sep="|",
         header=None,
         names=ITEM_COLUMNS,
         engine="python",
         encoding="latin-1",
     )
-    解析结果 = 电影表["电影名称原始"].apply(解析电影名称与年份)
-    电影表["电影名称"] = 解析结果.apply(lambda x: x[0])
-    电影表["上映年份"] = 解析结果.apply(lambda x: x[1])
-    电影表["上映日期"] = pd.to_datetime(电影表["上映日期"], errors="coerce")
-    return 电影表
+
+    parsed_result = items_df["movie_title_raw"].apply(parse_movie_title_and_year)
+    items_df["movie_title"] = parsed_result.apply(lambda x: x[0])
+    items_df["release_year"] = parsed_result.apply(lambda x: x[1])
+    items_df["release_date"] = pd.to_datetime(items_df["release_date"], errors="coerce")
+    return items_df
 
 
-def 读取全部数据(data_dir: Path):
-    评分表 = 读取评分表(data_dir)
-    用户表 = 读取用户表(data_dir)
-    电影表 = 读取电影表(data_dir)
-    return 评分表, 用户表, 电影表
+
+def load_all_data(data_dir: Path):
+    ratings_df = load_ratings(data_dir)
+    users_df = load_users(data_dir)
+    items_df = load_items(data_dir)
+    return ratings_df, users_df, items_df
 
 
-def 整理电影类型统计基础表(电影表: pd.DataFrame) -> pd.DataFrame:
-    类型统计 = []
-    for 类型 in 类型列:
-        类型统计.append(
+
+def build_genre_statistics_base(items_df: pd.DataFrame) -> pd.DataFrame:
+    genre_stats = []
+    for genre in GENRE_COLUMNS:
+        genre_stats.append(
             {
-                "类型": 类型,
-                "电影数量": int(电影表[类型].fillna(0).astype(int).sum()),
+                "genre": genre,
+                "movie_count": int(items_df[genre].fillna(0).astype(int).sum()),
             }
         )
-    类型统计表 = pd.DataFrame(类型统计).sort_values("电影数量", ascending=False).reset_index(drop=True)
-    return 类型统计表
+    genre_stats_df = (
+        pd.DataFrame(genre_stats)
+        .sort_values("movie_count", ascending=False)
+        .reset_index(drop=True)
+    )
+    return genre_stats_df

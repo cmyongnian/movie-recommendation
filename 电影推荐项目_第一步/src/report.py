@@ -1,83 +1,103 @@
 from pathlib import Path
 
 
-def 生成解释语句(全局统计: dict) -> list[str]:
-    解释 = []
 
-    稀疏度 = 全局统计["矩阵稀疏度"]
-    if 稀疏度 >= 0.9:
-        解释.append(f"- 用户—电影评分矩阵稀疏度为 {稀疏度:.4f}，说明数据非常稀疏，后续协同过滤容易受到共同评分不足的影响。")
+def generate_explanation_sentences(global_stats: dict) -> list[str]:
+    explanations = []
+
+    sparsity = global_stats["matrix_sparsity"]
+    if sparsity >= 0.9:
+        explanations.append(
+            f"- The user-item rating matrix sparsity is {sparsity:.4f}, which indicates that the data is highly sparse. This may weaken similarity estimation in collaborative filtering."
+        )
     else:
-        解释.append(f"- 用户—电影评分矩阵稀疏度为 {稀疏度:.4f}，数据稀疏问题存在，但相对可控。")
+        explanations.append(
+            f"- The user-item rating matrix sparsity is {sparsity:.4f}. Sparsity still exists, but it is relatively manageable."
+        )
 
-    长尾占比 = 全局统计["前百分之二十评分占比"]
-    if 长尾占比 >= 0.6:
-        解释.append(f"- 前百分之二十的电影贡献了 {长尾占比:.2%} 的评分，热门电影高度集中，长尾现象明显。")
+    long_tail_ratio = global_stats["top_20_percent_rating_share"]
+    if long_tail_ratio >= 0.6:
+        explanations.append(
+            f"- The top 20% of movies contribute {long_tail_ratio:.2%} of all ratings, showing a clear long-tail effect and strong popularity concentration."
+        )
     else:
-        解释.append(f"- 前百分之二十的电影贡献了 {长尾占比:.2%} 的评分，热度集中程度中等。")
+        explanations.append(
+            f"- The top 20% of movies contribute {long_tail_ratio:.2%} of all ratings, indicating a moderate concentration of popularity."
+        )
 
-    评分均值 = 全局统计["评分均值"]
-    if 评分均值 >= 3.5:
-        解释.append(f"- 平均评分为 {评分均值:.2f}，整体上用户打分偏正向。")
+    rating_mean = global_stats["rating_mean"]
+    if rating_mean >= 3.5:
+        explanations.append(
+            f"- The average rating is {rating_mean:.2f}, suggesting that users tend to rate movies positively overall."
+        )
     else:
-        解释.append(f"- 平均评分为 {评分均值:.2f}，用户评分相对保守。")
+        explanations.append(
+            f"- The average rating is {rating_mean:.2f}, suggesting that user ratings are relatively conservative."
+        )
 
-    用户中位数 = 全局统计["用户评分次数中位数"]
-    if 用户中位数 < 全局统计["用户平均评分次数"]:
-        解释.append("- 用户评分次数中位数低于均值，说明少数高活跃用户拉高了整体平均值，用户活跃度分布不均衡。")
+    user_median = global_stats["user_rating_count_median"]
+    if user_median < global_stats["user_average_rating_count"]:
+        explanations.append(
+            "- The median number of ratings per user is lower than the mean, which means a small number of highly active users raise the overall average. User activity is unevenly distributed."
+        )
     else:
-        解释.append("- 用户评分次数分布较为均衡。")
+        explanations.append("- The user rating count distribution is relatively balanced.")
 
-    电影中位数 = 全局统计["电影被评分次数中位数"]
-    if 电影中位数 < 全局统计["电影平均被评分次数"]:
-        解释.append("- 电影被评分次数中位数低于均值，说明少数热门电影占据了大量曝光。")
+    item_median = global_stats["item_rating_count_median"]
+    if item_median < global_stats["item_average_rating_count"]:
+        explanations.append(
+            "- The median number of ratings per movie is lower than the mean, which means a small number of popular movies receive a large share of exposure."
+        )
     else:
-        解释.append("- 电影热度分布相对均衡。")
+        explanations.append("- The movie popularity distribution is relatively balanced.")
 
-    解释.append("- 下一步建议先建立基线模型，再比较协同过滤与矩阵分解算法，并结合活跃用户与冷门电影分组做进一步分析。")
-    return 解释
+    explanations.append(
+        "- The next step should be to build baseline models first, then compare collaborative filtering and matrix factorization methods, with additional subgroup analysis for active users and cold items."
+    )
+    return explanations
 
 
-def 生成分析报告(输出目录: Path, 全局统计: dict):
-    文件路径 = 输出目录 / "阶段一分析结论.md"
-    解释语句 = 生成解释语句(全局统计)
 
-    内容 = f"""# 阶段一分析结论
+def generate_analysis_report(output_dir: Path, global_stats: dict):
+    file_path = output_dir / "step1_analysis_summary.md"
+    explanation_sentences = generate_explanation_sentences(global_stats)
 
-## 一、核心统计结果
+    content = f"""# Step 1 Analysis Summary
 
-- 用户数：{全局统计['用户数']}
-- 电影数：{全局统计['电影数']}
-- 评分数：{全局统计['评分数']}
-- 评分均值：{全局统计['评分均值']}
-- 评分中位数：{全局统计['评分中位数']}
-- 评分标准差：{全局统计['评分标准差']}
-- 矩阵稀疏度：{全局统计['矩阵稀疏度']}
-- 用户平均评分次数：{全局统计['用户平均评分次数']}
-- 用户评分次数中位数：{全局统计['用户评分次数中位数']}
-- 电影平均被评分次数：{全局统计['电影平均被评分次数']}
-- 电影被评分次数中位数：{全局统计['电影被评分次数中位数']}
-- 高活跃用户占比：{全局统计['高活跃用户占比']:.2%}
-- 前百分之二十电影数：{全局统计['前百分之二十电影数']}
-- 前百分之二十评分占比：{全局统计['前百分之二十评分占比']:.2%}
+## 1. Core Statistics
 
-## 二、现象分析
+- Number of users: {global_stats['num_users']}
+- Number of movies: {global_stats['num_items']}
+- Number of ratings: {global_stats['num_ratings']}
+- Mean rating: {global_stats['rating_mean']}
+- Median rating: {global_stats['rating_median']}
+- Rating standard deviation: {global_stats['rating_std']}
+- Matrix sparsity: {global_stats['matrix_sparsity']}
+- Average number of ratings per user: {global_stats['user_average_rating_count']}
+- Median number of ratings per user: {global_stats['user_rating_count_median']}
+- Average number of ratings per movie: {global_stats['item_average_rating_count']}
+- Median number of ratings per movie: {global_stats['item_rating_count_median']}
+- High activity user ratio: {global_stats['high_activity_user_ratio']:.2%}
+- Top 20% movie count: {global_stats['top_20_percent_item_count']}
+- Rating share from top 20% movies: {global_stats['top_20_percent_rating_share']:.2%}
 
-{chr(10).join(解释语句)}
+## 2. Observations
 
-## 三、对后续建模的影响
+{chr(10).join(explanation_sentences)}
 
-1. 数据稀疏会影响用户协同过滤与物品协同过滤中的相似度估计。
-2. 热门电影过于集中时，模型可能更偏向热门物品，冷门电影推荐效果会受限。
-3. 高活跃用户与低活跃用户的行为差异较大，后续应考虑分群评估。
-4. 如果后续采用矩阵分解方法，稀疏场景下通常会比基础邻域方法更稳定。
+## 3. Implications for Modeling
 
-## 四、建议的下一步工作
+1. Data sparsity can weaken similarity estimation in user-based and item-based collaborative filtering.
+2. When movie popularity is heavily concentrated, models may become biased toward popular items, making cold-item recommendation more difficult.
+3. Behavioral differences between highly active and less active users are significant, so subgroup evaluation should be considered in later experiments.
+4. If matrix factorization is used later, it is often more stable than neighborhood methods in sparse settings.
 
-1. 构造全局平均分、用户平均分、电影平均分基线。
-2. 实现一种协同过滤方法。
-3. 实现一种矩阵分解方法。
-4. 从整体用户、低活跃用户、高活跃用户三个层面比较结果。
+## 4. Suggested Next Steps
+
+1. Build baseline predictors using global average, user average, and item average.
+2. Implement one collaborative filtering method.
+3. Implement one matrix factorization method.
+4. Compare results for overall users, low-activity users, and high-activity users.
 """
 
-    文件路径.write_text(内容, encoding="utf-8")
+    file_path.write_text(content, encoding="utf-8")

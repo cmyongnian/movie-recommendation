@@ -1,50 +1,54 @@
 import argparse
 from pathlib import Path
 
-from src.config import 默认数据目录, 默认输出目录
-from src.data_loader import 读取全部数据
-from src.preprocess import 保存预处理结果, 执行预处理与统计
-from src.report import 生成分析报告
-from src.visualize import 生成全部图像
+from src.config import DEFAULT_DATA_DIR, DEFAULT_OUTPUT_DIR
+from src.data_loader import load_all_data
+from src.preprocess import save_preprocessed_results, run_preprocessing_and_statistics
+from src.report import generate_analysis_report
+from src.visualize import generate_all_figures
 
 
 
-def 主函数():
-    解析器 = argparse.ArgumentParser(description="电影推荐项目第一步：预处理与可视化分析")
-    解析器.add_argument("--data-dir", type=str, default=str(默认数据目录), help="原始数据目录")
-    解析器.add_argument("--output-dir", type=str, default=str(默认输出目录), help="输出目录")
-    参数 = 解析器.parse_args()
+def main():
+    parser = argparse.ArgumentParser(
+        description="Movie recommendation project step 1: preprocessing and visualization analysis"
+    )
+    parser.add_argument("--data-dir", type=str, default=str(DEFAULT_DATA_DIR), help="Raw data directory")
+    parser.add_argument("--output-dir", type=str, default=str(DEFAULT_OUTPUT_DIR), help="Output directory")
+    args = parser.parse_args()
 
-    数据目录 = Path(参数.data_dir)
-    输出目录 = Path(参数.output_dir)
+    data_dir = Path(args.data_dir)
+    output_dir = Path(args.output_dir)
 
-    if not 数据目录.exists():
-        raise FileNotFoundError(f"未找到数据目录：{数据目录}")
+    if not data_dir.exists():
+        raise FileNotFoundError(f"Data directory not found: {data_dir}")
 
-    评分表, 用户表, 电影表 = 读取全部数据(数据目录)
-    评分表, 用户统计, 电影统计, 类型统计, 合并表, 全局统计 = 执行预处理与统计(评分表, 用户表, 电影表)
-
-    保存预处理结果(
-        输出目录=输出目录,
-        评分表=评分表,
-        用户表=用户表,
-        电影表=电影表,
-        用户统计=用户统计,
-        电影统计=电影统计,
-        类型统计=类型统计,
-        全局统计=全局统计,
+    ratings_df, users_df, items_df = load_all_data(data_dir)
+    ratings_df, user_stats, item_stats, genre_stats, merged_df, global_stats = run_preprocessing_and_statistics(
+        ratings_df, users_df, items_df
     )
 
-    生成全部图像(评分表, 用户统计, 电影统计, 类型统计, 输出目录)
-    生成分析报告(输出目录, 全局统计)
+    save_preprocessed_results(
+        output_dir=output_dir,
+        ratings_df=ratings_df,
+        users_df=users_df,
+        items_df=items_df,
+        user_stats=user_stats,
+        item_stats=item_stats,
+        genre_stats=genre_stats,
+        global_stats=global_stats,
+    )
 
-    print("第一阶段处理完成")
-    print(f"输出目录：{输出目录.resolve()}")
-    print(f"用户数：{全局统计['用户数']}")
-    print(f"电影数：{全局统计['电影数']}")
-    print(f"评分数：{全局统计['评分数']}")
-    print(f"矩阵稀疏度：{全局统计['矩阵稀疏度']}")
+    generate_all_figures(ratings_df, user_stats, item_stats, genre_stats, output_dir)
+    generate_analysis_report(output_dir, global_stats)
+
+    print("Step 1 completed")
+    print(f"Output directory: {output_dir.resolve()}")
+    print(f"Number of users: {global_stats['num_users']}")
+    print(f"Number of movies: {global_stats['num_items']}")
+    print(f"Number of ratings: {global_stats['num_ratings']}")
+    print(f"Matrix sparsity: {global_stats['matrix_sparsity']}")
 
 
 if __name__ == "__main__":
-    主函数()
+    main()
