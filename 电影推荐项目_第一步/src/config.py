@@ -31,5 +31,5 @@ ITEM_COLUMNS = [
 
 类型列 = ITEM_COLUMNS[5:]
 
-默认数据目录 = Path("data/ml-100k")
+默认数据目录 = Path("E:\数据挖掘\期末\movie-recommendation\ml-100k")
 默认输出目录 = Path("output")
