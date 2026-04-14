@@ -31,5 +31,5 @@ ITEM_COLUMNS = [
 
 GENRE_COLUMNS = ITEM_COLUMNS[5:]
 
-DEFAULT_DATA_DIR = Path("E:\数据挖掘\期末\movie-recommendation\ml-100k")
+DEFAULT_DATA_DIR = Path("ml-100k")
 DEFAULT_OUTPUT_DIR = Path("output")
