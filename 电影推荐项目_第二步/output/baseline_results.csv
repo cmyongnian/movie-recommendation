@@ -1,0 +1,4 @@
+﻿model,valid_mae,valid_rmse,test_mae,test_rmse
+ItemMean,0.811657,1.022395,0.821573,1.028549
+UserMean,0.833709,1.040556,0.833113,1.033484
+GlobalMean,0.944282,1.126964,0.943072,1.122088
