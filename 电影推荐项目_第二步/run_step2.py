@@ -1,5 +1,7 @@
 import argparse
 from pathlib import Path
+from src.visualize_exp import generate_all_experiment_figures
+from src.report import generate_step2_markdown_report
 
 from src.config import (
     默认评分文件路径,
@@ -173,7 +175,24 @@ def main():
         summary=summary,
     )
 
-    print("\n实验结果已保存")
+    generate_all_experiment_figures(
+        baseline_results=baseline_results,
+        itemcf_results=itemcf_results,
+        mf_results=mf_results,
+        output_dir=output_dir,
+    )
+
+    generate_step2_markdown_report(
+        output_dir=output_dir,
+        baseline_results=baseline_results,
+        itemcf_results=itemcf_results,
+        mf_results=mf_results,
+        train_size=len(train_df),
+        valid_size=len(valid_df),
+        test_size=len(test_df),
+    )
+
+    print("\n实验结果、参数分析图和实验结论已保存")
     print(f"输出目录: {output_dir.resolve()}")
     print("\n最优基线模型:")
     print(best_baseline)
