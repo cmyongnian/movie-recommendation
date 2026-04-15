@@ -5,7 +5,7 @@ import pandas as pd
 from matplotlib import font_manager
 
 
-CANDIDATE_FONTS = [
+候选字体 = [
     "Microsoft YaHei",
     "SimHei",
     "Noto Sans CJK SC",
@@ -14,9 +14,9 @@ CANDIDATE_FONTS = [
 ]
 
 
-def set_chinese_font():
+def 设置中文字体():
     installed_fonts = {f.name for f in font_manager.fontManager.ttflist}
-    for font in CANDIDATE_FONTS:
+    for font in 候选字体:
         if font in installed_fonts:
             plt.rcParams["font.sans-serif"] = [font]
             plt.rcParams["axes.unicode_minus"] = False
@@ -26,35 +26,62 @@ def set_chinese_font():
     return None
 
 
-def save_figure(file_path: Path):
+def 保存图像(file_path: Path):
     plt.tight_layout()
     plt.savefig(file_path, dpi=180, bbox_inches="tight")
     plt.close()
 
 
-def plot_baseline_comparison(baseline_results: pd.DataFrame, output_dir: Path):
+def 规范模型名称(name: str) -> str:
+    映射 = {
+        "GlobalMean": "全局平均分",
+        "UserMean": "用户平均分",
+        "ItemMean": "电影平均分",
+        "ItemCF": "基于物品的协同过滤",
+        "BiasMF": "带偏置矩阵分解",
+        "GCN": "图卷积网络",
+        "GraphSAGE": "邻居聚合图网络",
+    }
+    return 映射.get(str(name), str(name))
+
+
+def 尝试读取图模型结果(output_dir: Path, gnn_results):
+    if gnn_results is not None:
+        return gnn_results
+
+    gnn_path = output_dir / "gnn_results.csv"
+    if gnn_path.exists():
+        try:
+            return pd.read_csv(gnn_path)
+        except Exception:
+            return None
+    return None
+
+
+def 绘制基线模型对比图(baseline_results: pd.DataFrame, output_dir: Path):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
     data = baseline_results.copy()
+    data["模型"] = data["model"].map(规范模型名称)
     data = data.sort_values("test_rmse").reset_index(drop=True)
 
     plt.figure(figsize=(8, 5))
-    plt.bar(data["model"], data["test_rmse"])
-    plt.title("基线模型测试集 RMSE 对比")
+    plt.bar(data["模型"], data["test_rmse"])
+    plt.title("基线模型测试集均方根误差对比")
     plt.xlabel("模型")
-    plt.ylabel("RMSE")
-    save_figure(fig_dir / "基线模型测试集RMSE对比.png")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "基线模型测试集均方根误差对比.png")
 
     plt.figure(figsize=(8, 5))
-    plt.bar(data["model"], data["test_mae"])
-    plt.title("基线模型测试集 MAE 对比")
+    plt.bar(data["模型"], data["test_mae"])
+    plt.title("基线模型测试集平均绝对误差对比")
     plt.xlabel("模型")
-    plt.ylabel("MAE")
-    save_figure(fig_dir / "基线模型测试集MAE对比.png")
+    plt.ylabel("平均绝对误差")
+    保存图像(fig_dir / "基线模型测试集平均绝对误差对比.png")
 
 
-def plot_itemcf_k_curve(itemcf_results: pd.DataFrame, output_dir: Path):
+def 绘制协同过滤邻居数曲线(itemcf_results: pd.DataFrame, output_dir: Path):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
@@ -62,34 +89,36 @@ def plot_itemcf_k_curve(itemcf_results: pd.DataFrame, output_dir: Path):
     if data.empty:
         return
 
-    sim_list = sorted(data["sim_metric"].dropna().unique().tolist())
+    相似度列表 = sorted(data["sim_metric"].dropna().unique().tolist())
 
     plt.figure(figsize=(8, 5))
-    for sim in sim_list:
+    for sim in 相似度列表:
         subset = data[data["sim_metric"] == sim].copy()
         subset = subset.sort_values("k")
-        plt.plot(subset["k"], subset["test_rmse"], marker="o", label=f"{sim}")
+        相似度名称 = "余弦相似度" if sim == "cosine" else "皮尔逊相关系数"
+        plt.plot(subset["k"], subset["test_rmse"], marker="o", label=相似度名称)
 
-    plt.title("ItemCF 不同邻居数下的测试集 RMSE")
-    plt.xlabel("邻居数 k")
-    plt.ylabel("RMSE")
+    plt.title("协同过滤不同邻居数下的测试集均方根误差")
+    plt.xlabel("邻居数")
+    plt.ylabel("均方根误差")
     plt.legend()
-    save_figure(fig_dir / "ItemCF不同邻居数测试集RMSE曲线.png")
+    保存图像(fig_dir / "协同过滤不同邻居数测试集均方根误差曲线.png")
 
     plt.figure(figsize=(8, 5))
-    for sim in sim_list:
+    for sim in 相似度列表:
         subset = data[data["sim_metric"] == sim].copy()
         subset = subset.sort_values("k")
-        plt.plot(subset["k"], subset["test_mae"], marker="o", label=f"{sim}")
+        相似度名称 = "余弦相似度" if sim == "cosine" else "皮尔逊相关系数"
+        plt.plot(subset["k"], subset["test_mae"], marker="o", label=相似度名称)
 
-    plt.title("ItemCF 不同邻居数下的测试集 MAE")
-    plt.xlabel("邻居数 k")
-    plt.ylabel("MAE")
+    plt.title("协同过滤不同邻居数下的测试集平均绝对误差")
+    plt.xlabel("邻居数")
+    plt.ylabel("平均绝对误差")
     plt.legend()
-    save_figure(fig_dir / "ItemCF不同邻居数测试集MAE曲线.png")
+    保存图像(fig_dir / "协同过滤不同邻居数测试集平均绝对误差曲线.png")
 
 
-def plot_itemcf_similarity_comparison(itemcf_results: pd.DataFrame, output_dir: Path):
+def 绘制协同过滤相似度方法对比(itemcf_results: pd.DataFrame, output_dir: Path):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
@@ -103,15 +132,19 @@ def plot_itemcf_similarity_comparison(itemcf_results: pd.DataFrame, output_dir: 
         .first()
     )
 
+    best_rows["方法"] = best_rows["sim_metric"].map(
+        lambda x: "余弦相似度" if x == "cosine" else "皮尔逊相关系数"
+    )
+
     plt.figure(figsize=(8, 5))
-    plt.bar(best_rows["sim_metric"], best_rows["test_rmse"])
-    plt.title("ItemCF 不同相似度方法最佳结果对比（测试集 RMSE）")
+    plt.bar(best_rows["方法"], best_rows["test_rmse"])
+    plt.title("协同过滤不同相似度方法最佳结果对比")
     plt.xlabel("相似度方法")
-    plt.ylabel("RMSE")
-    save_figure(fig_dir / "ItemCF相似度方法最佳结果对比.png")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "协同过滤相似度方法最佳结果对比.png")
 
 
-def plot_mf_factor_curve(mf_results: pd.DataFrame, output_dir: Path):
+def 绘制矩阵分解隐向量维度曲线(mf_results: pd.DataFrame, output_dir: Path):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
@@ -127,13 +160,13 @@ def plot_mf_factor_curve(mf_results: pd.DataFrame, output_dir: Path):
 
     plt.figure(figsize=(8, 5))
     plt.plot(grouped["n_factors"], grouped["test_rmse"], marker="o")
-    plt.title("BiasMF 不同隐向量维度下的最优测试集 RMSE")
-    plt.xlabel("隐向量维度 n_factors")
-    plt.ylabel("RMSE")
-    save_figure(fig_dir / "BiasMF隐向量维度测试集RMSE曲线.png")
+    plt.title("矩阵分解不同隐向量维度下的最优测试集均方根误差")
+    plt.xlabel("隐向量维度")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "矩阵分解隐向量维度测试集均方根误差曲线.png")
 
 
-def plot_mf_reg_curve(mf_results: pd.DataFrame, output_dir: Path):
+def 绘制矩阵分解正则化曲线(mf_results: pd.DataFrame, output_dir: Path):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
 
@@ -149,17 +182,111 @@ def plot_mf_reg_curve(mf_results: pd.DataFrame, output_dir: Path):
 
     plt.figure(figsize=(8, 5))
     plt.plot(grouped["reg"], grouped["test_rmse"], marker="o")
-    plt.title("BiasMF 不同正则化系数下的最优测试集 RMSE")
-    plt.xlabel("正则化系数 reg")
-    plt.ylabel("RMSE")
-    save_figure(fig_dir / "BiasMF正则化系数测试集RMSE曲线.png")
+    plt.title("矩阵分解不同正则化系数下的最优测试集均方根误差")
+    plt.xlabel("正则化系数")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "矩阵分解正则化系数测试集均方根误差曲线.png")
 
 
-def plot_model_comparison(
+def 绘制图神经网络隐藏维度曲线(gnn_results: pd.DataFrame, output_dir: Path):
+    fig_dir = output_dir / "图像"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    if gnn_results is None or gnn_results.empty:
+        return
+
+    data = gnn_results.copy()
+
+    grouped = (
+        data.groupby("hidden_dim", as_index=False)["test_rmse"]
+        .min()
+        .sort_values("hidden_dim")
+    )
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(grouped["hidden_dim"], grouped["test_rmse"], marker="o")
+    plt.title("图神经网络不同隐藏维度下的最优测试集均方根误差")
+    plt.xlabel("隐藏维度")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "图神经网络隐藏维度测试集均方根误差曲线.png")
+
+
+def 绘制图神经网络学习率曲线(gnn_results: pd.DataFrame, output_dir: Path):
+    fig_dir = output_dir / "图像"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    if gnn_results is None or gnn_results.empty:
+        return
+
+    data = gnn_results.copy()
+
+    grouped = (
+        data.groupby("lr", as_index=False)["test_rmse"]
+        .min()
+        .sort_values("lr")
+    )
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(grouped["lr"], grouped["test_rmse"], marker="o")
+    plt.title("图神经网络不同学习率下的最优测试集均方根误差")
+    plt.xlabel("学习率")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "图神经网络学习率测试集均方根误差曲线.png")
+
+
+def 绘制图神经网络权重衰减曲线(gnn_results: pd.DataFrame, output_dir: Path):
+    fig_dir = output_dir / "图像"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    if gnn_results is None or gnn_results.empty:
+        return
+
+    data = gnn_results.copy()
+
+    grouped = (
+        data.groupby("weight_decay", as_index=False)["test_rmse"]
+        .min()
+        .sort_values("weight_decay")
+    )
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(grouped["weight_decay"], grouped["test_rmse"], marker="o")
+    plt.title("图神经网络不同权重衰减下的最优测试集均方根误差")
+    plt.xlabel("权重衰减")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "图神经网络权重衰减测试集均方根误差曲线.png")
+
+
+def 绘制图神经网络模型对比(gnn_results: pd.DataFrame, output_dir: Path):
+    fig_dir = output_dir / "图像"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    if gnn_results is None or gnn_results.empty:
+        return
+
+    data = gnn_results.copy()
+    best_rows = (
+        data.sort_values("valid_rmse")
+        .groupby("model", as_index=False)
+        .first()
+    )
+
+    best_rows["模型"] = best_rows["model"].map(规范模型名称)
+
+    plt.figure(figsize=(8, 5))
+    plt.bar(best_rows["模型"], best_rows["test_rmse"])
+    plt.title("图神经网络模型最佳结果对比")
+    plt.xlabel("模型")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "图神经网络模型最佳结果对比.png")
+
+
+def 绘制最优模型总体对比(
     baseline_results: pd.DataFrame,
     itemcf_results: pd.DataFrame,
     mf_results: pd.DataFrame,
     output_dir: Path,
+    gnn_results: pd.DataFrame = None,
 ):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -168,35 +295,41 @@ def plot_model_comparison(
     best_itemcf = itemcf_results.sort_values("valid_rmse").iloc[0]
     best_mf = mf_results.sort_values("valid_rmse").iloc[0]
 
-    models = [
-        str(best_baseline["model"]),
-        "ItemCF",
-        "BiasMF",
+    模型 = [
+        规范模型名称(best_baseline["model"]),
+        "基于物品的协同过滤",
+        "带偏置矩阵分解",
     ]
-    test_rmse = [
+    测试集均方根误差 = [
         float(best_baseline["test_rmse"]),
         float(best_itemcf["test_rmse"]),
         float(best_mf["test_rmse"]),
     ]
-    test_mae = [
+    测试集平均绝对误差 = [
         float(best_baseline["test_mae"]),
         float(best_itemcf["test_mae"]),
         float(best_mf["test_mae"]),
     ]
 
-    plt.figure(figsize=(8, 5))
-    plt.bar(models, test_rmse)
-    plt.title("最优模型测试集 RMSE 对比")
-    plt.xlabel("模型")
-    plt.ylabel("RMSE")
-    save_figure(fig_dir / "最优模型测试集RMSE对比.png")
+    if gnn_results is not None and not gnn_results.empty:
+        best_gnn = gnn_results.sort_values("valid_rmse").iloc[0]
+        模型.append(规范模型名称(best_gnn["model"]))
+        测试集均方根误差.append(float(best_gnn["test_rmse"]))
+        测试集平均绝对误差.append(float(best_gnn["test_mae"]))
 
-    plt.figure(figsize=(8, 5))
-    plt.bar(models, test_mae)
-    plt.title("最优模型测试集 MAE 对比")
+    plt.figure(figsize=(9, 5))
+    plt.bar(模型, 测试集均方根误差)
+    plt.title("最优模型测试集均方根误差对比")
     plt.xlabel("模型")
-    plt.ylabel("MAE")
-    save_figure(fig_dir / "最优模型测试集MAE对比.png")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "最优模型测试集均方根误差对比.png")
+
+    plt.figure(figsize=(9, 5))
+    plt.bar(模型, 测试集平均绝对误差)
+    plt.title("最优模型测试集平均绝对误差对比")
+    plt.xlabel("模型")
+    plt.ylabel("平均绝对误差")
+    保存图像(fig_dir / "最优模型测试集平均绝对误差对比.png")
 
 
 def generate_all_experiment_figures(
@@ -204,12 +337,29 @@ def generate_all_experiment_figures(
     itemcf_results: pd.DataFrame,
     mf_results: pd.DataFrame,
     output_dir: Path,
+    gnn_results: pd.DataFrame = None,
 ):
-    set_chinese_font()
+    output_dir = Path(output_dir)
+    设置中文字体()
 
-    plot_baseline_comparison(baseline_results, output_dir)
-    plot_itemcf_k_curve(itemcf_results, output_dir)
-    plot_itemcf_similarity_comparison(itemcf_results, output_dir)
-    plot_mf_factor_curve(mf_results, output_dir)
-    plot_mf_reg_curve(mf_results, output_dir)
-    plot_model_comparison(baseline_results, itemcf_results, mf_results, output_dir)
+    gnn_results = 尝试读取图模型结果(output_dir, gnn_results)
+
+    绘制基线模型对比图(baseline_results, output_dir)
+    绘制协同过滤邻居数曲线(itemcf_results, output_dir)
+    绘制协同过滤相似度方法对比(itemcf_results, output_dir)
+    绘制矩阵分解隐向量维度曲线(mf_results, output_dir)
+    绘制矩阵分解正则化曲线(mf_results, output_dir)
+
+    if gnn_results is not None and not gnn_results.empty:
+        绘制图神经网络隐藏维度曲线(gnn_results, output_dir)
+        绘制图神经网络学习率曲线(gnn_results, output_dir)
+        绘制图神经网络权重衰减曲线(gnn_results, output_dir)
+        绘制图神经网络模型对比(gnn_results, output_dir)
+
+    绘制最优模型总体对比(
+        baseline_results=baseline_results,
+        itemcf_results=itemcf_results,
+        mf_results=mf_results,
+        output_dir=output_dir,
+        gnn_results=gnn_results,
+    )

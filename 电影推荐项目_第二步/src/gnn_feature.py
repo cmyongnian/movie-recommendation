@@ -11,11 +11,15 @@ from .graph_utils import (
     dataframe_to_index_tensors,
     load_step1_feature_tables,
 )
-from .metrics import mae_rmse
-from .metrics import clip_rating
+from .metrics import mae_rmse, clip_rating
 
 
-def _build_sparse_operators(num_nodes: int, edge_index: torch.Tensor, device):
+def _build_sparse_operators(
+    num_nodes: int,
+    edge_index: torch.Tensor,
+    edge_weight: torch.Tensor,
+    device,
+):
     row = edge_index[0]
     col = edge_index[1]
 
@@ -23,7 +27,8 @@ def _build_sparse_operators(num_nodes: int, edge_index: torch.Tensor, device):
     row = torch.cat([row, self_loop], dim=0)
     col = torch.cat([col, self_loop], dim=0)
 
-    values = torch.ones(row.shape[0], dtype=torch.float32, device=device)
+    self_loop_values = torch.ones(num_nodes, dtype=torch.float32, device=device)
+    values = torch.cat([edge_weight, self_loop_values], dim=0)
 
     adj = torch.sparse_coo_tensor(
         indices=torch.stack([row, col], dim=0),
@@ -97,8 +102,9 @@ class FeatureGNNModel(nn.Module):
         user_input_dim: int,
         item_input_dim: int,
         hidden_dim: int = 32,
-        num_layers: int = 2,
+        num_layers: int = 1,
         dropout: float = 0.1,
+        feature_dropout: float = 0.1,
     ):
         super().__init__()
 
@@ -111,9 +117,35 @@ class FeatureGNNModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         self.dropout = dropout
+        self.feature_dropout = feature_dropout
 
-        self.user_encoder = nn.Linear(user_input_dim, hidden_dim)
-        self.item_encoder = nn.Linear(item_input_dim, hidden_dim)
+        # 属性特征编码
+        self.user_encoder = nn.Sequential(
+            nn.Linear(user_input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
+        )
+        self.item_encoder = nn.Sequential(
+            nn.Linear(item_input_dim, hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
+        )
+
+        # ID embedding
+        self.user_id_embedding = nn.Embedding(num_users, hidden_dim)
+        self.item_id_embedding = nn.Embedding(num_items, hidden_dim)
+
+        # 属性 + ID 融合
+        self.user_fusion = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
+        )
+        self.item_fusion = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            nn.LayerNorm(hidden_dim),
+        )
 
         layers = []
         for _ in range(num_layers):
@@ -123,22 +155,51 @@ class FeatureGNNModel(nn.Module):
                 layers.append(GraphSAGELayer(hidden_dim, hidden_dim))
         self.layers = nn.ModuleList(layers)
 
+        # 偏置项
         self.user_bias = nn.Embedding(num_users, 1)
         self.item_bias = nn.Embedding(num_items, 1)
 
+        # MLP 评分头
+        self.scorer = nn.Sequential(
+            nn.Linear(hidden_dim * 4, hidden_dim),
+            nn.ReLU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_dim, 1),
+        )
+
         self.register_buffer("global_mean", torch.tensor(0.0, dtype=torch.float32))
 
+        self._reset_parameters()
+
+    def _reset_parameters(self):
+        nn.init.xavier_uniform_(self.user_id_embedding.weight)
+        nn.init.xavier_uniform_(self.item_id_embedding.weight)
+        nn.init.zeros_(self.user_bias.weight)
+        nn.init.zeros_(self.item_bias.weight)
+
     def encode_nodes(self, graph_data: Dict) -> torch.Tensor:
-        user_x = graph_data["user_features"]
-        item_x = graph_data["item_features"]
+        user_feat = graph_data["user_features"]
+        item_feat = graph_data["item_features"]
 
-        user_x = self.user_encoder(user_x)
-        item_x = self.item_encoder(item_x)
+        user_feat = self.user_encoder(user_feat)
+        item_feat = self.item_encoder(item_feat)
 
-        x = torch.cat([user_x, item_x], dim=0)
-        x = F.relu(x)
+        user_ids = torch.arange(self.num_users, device=user_feat.device)
+        item_ids = torch.arange(self.num_items, device=item_feat.device)
 
-        outputs = [x]
+        user_id_emb = self.user_id_embedding(user_ids)
+        item_id_emb = self.item_id_embedding(item_ids)
+
+        user_x = self.user_fusion(torch.cat([user_feat, user_id_emb], dim=1))
+        item_x = self.item_fusion(torch.cat([item_feat, item_id_emb], dim=1))
+
+        user_x = F.dropout(user_x, p=self.feature_dropout, training=self.training)
+        item_x = F.dropout(item_x, p=self.feature_dropout, training=self.training)
+
+        x0 = torch.cat([user_x, item_x], dim=0)
+
+        outputs = [x0]
+        x = x0
 
         for layer_idx, layer in enumerate(self.layers):
             if self.model_type == "gcn":
@@ -152,6 +213,7 @@ class FeatureGNNModel(nn.Module):
 
             outputs.append(x)
 
+        # 多层表示平均，减少过平滑影响
         final_x = torch.mean(torch.stack(outputs, dim=0), dim=0)
         return final_x
 
@@ -161,11 +223,23 @@ class FeatureGNNModel(nn.Module):
         z_user = z[user_idx]
         z_item = z[item_idx + self.num_users]
 
+        pair_feature = torch.cat(
+            [
+                z_user,
+                z_item,
+                z_user * z_item,
+                torch.abs(z_user - z_item),
+            ],
+            dim=1,
+        )
+
+        interaction_score = self.scorer(pair_feature).squeeze(-1)
+
         pred = (
             self.global_mean
             + self.user_bias(user_idx).squeeze(-1)
             + self.item_bias(item_idx).squeeze(-1)
-            + (z_user * z_item).sum(dim=1)
+            + interaction_score
         )
         return pred
 
@@ -178,13 +252,16 @@ class FeatureGNNModel(nn.Module):
 class FeatureGNNRecommender:
     def __init__(
         self,
-        model_type: str = "graphsage",
-        hidden_dim: int = 32,
-        num_layers: int = 2,
+        model_type: str = "gcn",
+        hidden_dim: int = 64,
+        num_layers: int = 1,
         lr: float = 0.005,
-        weight_decay: float = 1e-4,
+        weight_decay: float = 1e-5,
         epochs: int = 30,
         dropout: float = 0.1,
+        feature_dropout: float = 0.1,
+        grad_clip: float = 5.0,
+        patience: int = 8,
         seed: int = 42,
         device: Optional[str] = None,
         verbose: bool = False,
@@ -196,6 +273,9 @@ class FeatureGNNRecommender:
         self.weight_decay = weight_decay
         self.epochs = epochs
         self.dropout = dropout
+        self.feature_dropout = feature_dropout
+        self.grad_clip = grad_clip
+        self.patience = patience
         self.seed = seed
         self.verbose = verbose
         self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
@@ -227,9 +307,11 @@ class FeatureGNNRecommender:
             items_df=items_df,
             device=self.device,
         )
+
         self.graph_data["adj_norm"], self.graph_data["adj_mean"] = _build_sparse_operators(
             num_nodes=self.graph_data["num_nodes"],
             edge_index=self.graph_data["edge_index"],
+            edge_weight=self.graph_data["edge_weight"],
             device=self.device,
         )
 
@@ -242,6 +324,7 @@ class FeatureGNNRecommender:
             hidden_dim=self.hidden_dim,
             num_layers=self.num_layers,
             dropout=self.dropout,
+            feature_dropout=self.feature_dropout,
         ).to(self.device)
 
         self.model.global_mean.fill_(float(train_df["rating"].mean()))
@@ -268,22 +351,41 @@ class FeatureGNNRecommender:
             weight_decay=self.weight_decay,
         )
 
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer,
+            mode="min",
+            factor=0.5,
+            patience=4,
+        )
+
         best_state = None
         best_valid_rmse = float("inf")
+        wait = 0
 
         for epoch in range(1, self.epochs + 1):
             self.model.train()
 
             pred = self.model.predict_raw_index(train_user_idx, train_item_idx, self.graph_data)
-            loss = F.mse_loss(pred, train_ratings)
+            mse_loss = F.mse_loss(pred, train_ratings)
+
+            # 轻微 embedding 正则
+            reg_loss = 0.0
+            for name, param in self.model.named_parameters():
+                if "embedding" in name and param.requires_grad:
+                    reg_loss = reg_loss + 1e-6 * torch.sum(param * param)
+
+            loss = mse_loss + reg_loss
 
             optimizer.zero_grad()
             loss.backward()
+            nn.utils.clip_grad_norm_(self.model.parameters(), self.grad_clip)
             optimizer.step()
 
             record = {
                 "epoch": epoch,
                 "train_loss": round(float(loss.item()), 6),
+                "train_mse": round(float(mse_loss.item()), 6),
+                "lr": round(float(optimizer.param_groups[0]["lr"]), 8),
             }
 
             if valid_user_idx is not None and len(valid_user_idx) > 0:
@@ -291,9 +393,22 @@ class FeatureGNNRecommender:
                 record["valid_mae"] = valid_metrics["mae"]
                 record["valid_rmse"] = valid_metrics["rmse"]
 
+                scheduler.step(valid_metrics["rmse"])
+
                 if valid_metrics["rmse"] < best_valid_rmse:
                     best_valid_rmse = valid_metrics["rmse"]
                     best_state = deepcopy(self.model.state_dict())
+                    wait = 0
+                else:
+                    wait += 1
+
+                if wait >= self.patience:
+                    if self.verbose:
+                        print(f"Early stopping at epoch {epoch}")
+                    self.history.append(record)
+                    break
+            else:
+                scheduler.step(float(loss.item()))
 
             self.history.append(record)
 
@@ -305,10 +420,16 @@ class FeatureGNNRecommender:
 
         return self
 
-    def _evaluate_by_index(self, user_idx: torch.Tensor, item_idx: torch.Tensor, ratings: torch.Tensor) -> Dict[str, float]:
+    def _evaluate_by_index(
+        self,
+        user_idx: torch.Tensor,
+        item_idx: torch.Tensor,
+        ratings: torch.Tensor,
+    ) -> Dict[str, float]:
         self.model.eval()
         with torch.no_grad():
             pred = self.model.predict_index(user_idx, item_idx, self.graph_data)
+
         return mae_rmse(
             ratings.detach().cpu().numpy().tolist(),
             pred.detach().cpu().numpy().tolist(),
@@ -386,10 +507,12 @@ def sweep_gnn_feature(
                             weight_decay=weight_decay,
                             epochs=epochs,
                             dropout=dropout,
+                            feature_dropout=dropout,
                             seed=seed,
                             device=device,
                             verbose=False,
                         )
+
                         model.fit(
                             ratings_df=ratings_df,
                             train_df=train_df,

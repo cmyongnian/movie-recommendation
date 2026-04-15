@@ -48,7 +48,6 @@ def load_step1_feature_tables(users_path: str | Path, items_path: str | Path) ->
 
     users_df = pd.read_csv(users_path)
     items_df = pd.read_csv(items_path)
-
     return users_df, items_df
 
 
@@ -57,20 +56,19 @@ def _one_hot_from_series(values: pd.Series, categories: list[str]) -> np.ndarray
     result = np.zeros((len(values), len(categories)), dtype=np.float32)
 
     for row_idx, value in enumerate(values.tolist()):
-        if value not in value_to_idx:
-            continue
-        result[row_idx, value_to_idx[value]] = 1.0
+        if value in value_to_idx:
+            result[row_idx, value_to_idx[value]] = 1.0
 
     return result
 
 
 def build_user_feature_matrix(users_df: pd.DataFrame, user_ids: list[int]) -> Tuple[torch.Tensor, Dict]:
-    base_cols = ["user_id", "age", "gender", "occupation"]
-    missing = [c for c in base_cols if c not in users_df.columns]
+    required_cols = ["user_id", "age", "gender", "occupation"]
+    missing = [c for c in required_cols if c not in users_df.columns]
     if missing:
         raise ValueError(f"用户特征表缺少必要字段: {missing}")
 
-    users_meta = users_df[base_cols].copy()
+    users_meta = users_df[required_cols].copy()
     users_meta["user_id"] = pd.to_numeric(users_meta["user_id"], errors="coerce")
     users_meta = users_meta.dropna(subset=["user_id"]).copy()
     users_meta["user_id"] = users_meta["user_id"].astype(int)
@@ -78,12 +76,16 @@ def build_user_feature_matrix(users_df: pd.DataFrame, user_ids: list[int]) -> Tu
     full_df = pd.DataFrame({"user_id": user_ids})
     full_df = full_df.merge(users_meta, on="user_id", how="left")
 
-    full_df["age"] = pd.to_numeric(full_df["age"], errors="coerce").fillna(full_df["age"].median())
-    if pd.isna(full_df["age"].median()):
-        full_df["age"] = full_df["age"].fillna(30)
+    full_df["age"] = pd.to_numeric(full_df["age"], errors="coerce")
+    age_fill = full_df["age"].median()
+    if pd.isna(age_fill):
+        age_fill = 30
+    full_df["age"] = full_df["age"].fillna(age_fill)
 
     age_mean = float(full_df["age"].mean())
-    age_std = float(full_df["age"].std()) if float(full_df["age"].std()) > 0 else 1.0
+    age_std = float(full_df["age"].std())
+    if age_std <= 0:
+        age_std = 1.0
     age_feature = ((full_df["age"] - age_mean) / age_std).to_numpy(dtype=np.float32).reshape(-1, 1)
 
     full_df["gender"] = full_df["gender"].fillna("未知").astype(str)
@@ -142,7 +144,9 @@ def build_item_feature_matrix(items_df: pd.DataFrame, item_ids: list[int]) -> Tu
     full_df["release_year"] = full_df["release_year"].fillna(year_fill)
 
     year_mean = float(full_df["release_year"].mean())
-    year_std = float(full_df["release_year"].std()) if float(full_df["release_year"].std()) > 0 else 1.0
+    year_std = float(full_df["release_year"].std())
+    if year_std <= 0:
+        year_std = 1.0
     year_feature = ((full_df["release_year"] - year_mean) / year_std).to_numpy(dtype=np.float32).reshape(-1, 1)
 
     features = np.concatenate(
@@ -196,8 +200,12 @@ def build_graph_data(
     items_df: pd.DataFrame,
     device: str | torch.device = "cpu",
 ) -> Dict:
-    all_user_ids = sorted(pd.to_numeric(ratings_df["user_id"], errors="coerce").dropna().astype(int).unique().tolist())
-    all_item_ids = sorted(pd.to_numeric(ratings_df["item_id"], errors="coerce").dropna().astype(int).unique().tolist())
+    all_user_ids = sorted(
+        pd.to_numeric(ratings_df["user_id"], errors="coerce").dropna().astype(int).unique().tolist()
+    )
+    all_item_ids = sorted(
+        pd.to_numeric(ratings_df["item_id"], errors="coerce").dropna().astype(int).unique().tolist()
+    )
 
     user_id_to_idx = {user_id: idx for idx, user_id in enumerate(all_user_ids)}
     item_id_to_idx = {item_id: idx for idx, item_id in enumerate(all_item_ids)}
@@ -208,21 +216,27 @@ def build_graph_data(
     user_features = user_features.to(device)
     item_features = item_features.to(device)
 
-    edge_df = train_df[["user_id", "item_id"]].drop_duplicates().copy()
+    edge_df = train_df[["user_id", "item_id", "rating"]].copy()
     edge_df["user_id"] = pd.to_numeric(edge_df["user_id"], errors="coerce").astype(int)
     edge_df["item_id"] = pd.to_numeric(edge_df["item_id"], errors="coerce").astype(int)
+    edge_df["rating"] = pd.to_numeric(edge_df["rating"], errors="coerce").astype(float)
 
     src_user = edge_df["user_id"].map(user_id_to_idx).to_numpy(dtype=np.int64)
     dst_item = edge_df["item_id"].map(item_id_to_idx).to_numpy(dtype=np.int64) + len(all_user_ids)
 
+    # 评分映射到 [0,1]，作为边权
+    edge_weight = ((edge_df["rating"].to_numpy(dtype=np.float32) - 1.0) / 4.0).astype(np.float32)
+
     row = np.concatenate([src_user, dst_item], axis=0)
     col = np.concatenate([dst_item, src_user], axis=0)
+    val = np.concatenate([edge_weight, edge_weight], axis=0)
 
     edge_index = torch.tensor(
         np.stack([row, col], axis=0),
         dtype=torch.long,
         device=device,
     )
+    edge_weight_tensor = torch.tensor(val, dtype=torch.float32, device=device)
 
     graph_data = {
         "num_users": len(all_user_ids),
@@ -237,6 +251,7 @@ def build_graph_data(
         "user_feature_meta": user_meta,
         "item_feature_meta": item_meta,
         "edge_index": edge_index,
+        "edge_weight": edge_weight_tensor,
         "device": device,
     }
 
