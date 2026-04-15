@@ -1,5 +1,7 @@
 {
   "ratings_path": "..\\电影推荐项目_第一步\\output\\数据\\评分表_预处理后.csv",
+  "gnn_users_path": "E:\\数据挖掘\\期末\\movie-recommendation\\电影推荐项目_第一步\\output\\数据\\用户表_预处理后.csv",
+  "gnn_items_path": "E:\\数据挖掘\\期末\\movie-recommendation\\电影推荐项目_第一步\\output\\数据\\电影表_预处理后.csv",
   "train_size": 80000,
   "valid_size": 10000,
   "test_size": 10000,
@@ -30,5 +32,17 @@
     "valid_rmse": 0.929381,
     "test_mae": 0.734736,
     "test_rmse": 0.926227
+  },
+  "best_gnn": {
+    "model": "GraphSAGE",
+    "hidden_dim": 64,
+    "num_layers": 1,
+    "lr": 0.005,
+    "weight_decay": 1e-05,
+    "epochs": 30,
+    "valid_mae": 1.130753,
+    "valid_rmse": 1.421491,
+    "test_mae": 1.126144,
+    "test_rmse": 1.425155
   }
 }
