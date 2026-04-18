@@ -1,5 +1,5 @@
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, Tuple
 
 import numpy as np
 import pandas as pd
@@ -7,6 +7,7 @@ import pandas as pd
 from .baseline import ItemMeanModel
 from .itemcf import ItemCF
 from .mf import BiasMF
+from .svdpp import SVDPP
 from .gnn_feature import FeatureGNNRecommender
 
 
@@ -181,6 +182,7 @@ def train_step3_models(
     items_df: pd.DataFrame,
     itemcf_params: Dict,
     mf_params: Dict,
+    svdpp_params: Dict,
     gnn_params: Dict,
 ):
     models = {}
@@ -204,6 +206,16 @@ def train_step3_models(
         verbose=False,
     ).fit(train_df, valid_df=valid_df)
     models["带偏置矩阵分解"] = mf_model
+
+    svdpp_model = SVDPP(
+        n_factors=svdpp_params["n_factors"],
+        lr=svdpp_params["lr"],
+        reg=svdpp_params["reg"],
+        epochs=svdpp_params["epochs"],
+        seed=svdpp_params.get("seed", 42),
+        verbose=False,
+    ).fit(train_df, valid_df=valid_df)
+    models["SVD++"] = svdpp_model
 
     gnn_model = FeatureGNNRecommender(
         model_type=gnn_params["model_type"],
@@ -341,8 +353,8 @@ def generate_step3_markdown_report(
                 )
 
             if group_type == "用户冷启动分组":
-                分组值列表 = subset["group_value"].dropna().astype(str).unique().tolist()
-                if "冷启动用户" not in 分组值列表:
+                group_values = subset["group_value"].dropna().astype(str).unique().tolist()
+                if "冷启动用户" not in group_values:
                     lines.append("")
                     lines.append(
                         "- 说明：当前实验采用随机划分方式，测试集中严格意义上的新用户样本较少，因此未形成明显的“冷启动用户”测试子集。"
@@ -382,8 +394,8 @@ def generate_step3_markdown_report(
                 )
 
             if group_type == "电影冷启动分组":
-                分组值列表 = subset["group_value"].dropna().astype(str).unique().tolist()
-                if "冷启动电影" not in 分组值列表:
+                group_values = subset["group_value"].dropna().astype(str).unique().tolist()
+                if "冷启动电影" not in group_values:
                     lines.append("")
                     lines.append(
                         "- 说明：当前实验采用随机划分方式，测试集中严格意义上的新电影样本较少，因此冷启动电影分析更多反映低交互电影的预测难度。"
@@ -443,3 +455,4 @@ def generate_step3_markdown_report(
 
     report_path = output_dir / "第三步实验结论.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path

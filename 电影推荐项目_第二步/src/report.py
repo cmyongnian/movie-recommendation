@@ -11,6 +11,7 @@ def 规范模型名称(name: str) -> str:
         "ItemCF": "基于物品的协同过滤",
         "BiasMF": "带偏置矩阵分解",
         "SVDpp": "SVD++",
+        "SVDPP": "SVD++",
         "SVD++": "SVD++",
         "GCN": "图卷积网络",
         "GraphSAGE": "邻居聚合图网络",
