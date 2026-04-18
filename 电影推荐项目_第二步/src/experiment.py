@@ -10,6 +10,20 @@ from .svdpp import SVDPP
 from .metrics import evaluate_model
 
 
+def _build_result_row(prefix: str, metrics: dict) -> dict:
+    return {
+        f"{prefix}_mae": metrics["mae"],
+        f"{prefix}_rmse": metrics["rmse"],
+        f"{prefix}_exact_acc": metrics["exact_acc"],
+        f"{prefix}_within_0_5_acc": metrics["within_0_5_acc"],
+        f"{prefix}_within_1_0_acc": metrics["within_1_0_acc"],
+        f"{prefix}_like_acc": metrics["like_acc"],
+        f"{prefix}_precision": metrics["precision"],
+        f"{prefix}_recall": metrics["recall"],
+        f"{prefix}_f1": metrics["f1"],
+    }
+
+
 def run_baselines(train_df: pd.DataFrame, valid_df: pd.DataFrame, test_df: pd.DataFrame) -> pd.DataFrame:
     models = [
         GlobalMeanModel(),
@@ -21,15 +35,12 @@ def run_baselines(train_df: pd.DataFrame, valid_df: pd.DataFrame, test_df: pd.Da
         model.fit(train_df)
         valid_metrics = evaluate_model(model, valid_df)
         test_metrics = evaluate_model(model, test_df)
-        results.append(
-            {
-                "model": model.name,
-                "valid_mae": valid_metrics["mae"],
-                "valid_rmse": valid_metrics["rmse"],
-                "test_mae": test_metrics["mae"],
-                "test_rmse": test_metrics["rmse"],
-            }
-        )
+
+        row = {"model": model.name}
+        row.update(_build_result_row("valid", valid_metrics))
+        row.update(_build_result_row("test", test_metrics))
+        results.append(row)
+
     return pd.DataFrame(results).sort_values("valid_rmse").reset_index(drop=True)
 
 
@@ -51,17 +62,17 @@ def sweep_itemcf(
             model.fit(train_df)
             valid_metrics = evaluate_model(model, valid_df)
             test_metrics = evaluate_model(model, test_df)
+
             row = {
                 "model": "ItemCF",
                 "k": k,
                 "sim_metric": sim_metric,
                 "min_common": min_common,
-                "valid_mae": valid_metrics["mae"],
-                "valid_rmse": valid_metrics["rmse"],
-                "test_mae": test_metrics["mae"],
-                "test_rmse": test_metrics["rmse"],
             }
+            row.update(_build_result_row("valid", valid_metrics))
+            row.update(_build_result_row("test", test_metrics))
             results.append(row)
+
             if valid_metrics["rmse"] < best_valid_rmse:
                 best_valid_rmse = valid_metrics["rmse"]
                 best_model = model
@@ -98,18 +109,26 @@ def sweep_mf(
                 model.fit(train_df, valid_df=valid_df)
                 valid_metrics = evaluate_model(model, valid_df)
                 test_metrics = evaluate_model(model, test_df)
+
                 row = {
                     "model": "BiasMF",
                     "n_factors": n_factors,
                     "lr": lr,
                     "reg": reg,
                     "epochs": epochs,
-                    "valid_mae": valid_metrics["mae"],
-                    "valid_rmse": valid_metrics["rmse"],
-                    "test_mae": test_metrics["mae"],
-                    "test_rmse": test_metrics["rmse"],
                 }
+                row.update(_build_result_row("valid", valid_metrics))
+                row.update(_build_result_row("test", test_metrics))
+
+                if hasattr(model, "best_epoch") and model.best_epoch is not None:
+                    row["best_epoch"] = int(model.best_epoch)
+                if hasattr(model, "best_valid_rmse") and model.best_valid_rmse is not None:
+                    row["tracked_best_valid_rmse"] = round(float(model.best_valid_rmse), 6)
+                if hasattr(model, "early_stopped"):
+                    row["early_stopped"] = bool(model.early_stopped)
+
                 results.append(row)
+
                 if valid_metrics["rmse"] < best_valid_rmse:
                     best_valid_rmse = valid_metrics["rmse"]
                     best_model = model
@@ -146,18 +165,26 @@ def sweep_svdpp(
                 model.fit(train_df, valid_df=valid_df)
                 valid_metrics = evaluate_model(model, valid_df)
                 test_metrics = evaluate_model(model, test_df)
+
                 row = {
                     "model": "SVDPP",
                     "n_factors": n_factors,
                     "lr": lr,
                     "reg": reg,
                     "epochs": epochs,
-                    "valid_mae": valid_metrics["mae"],
-                    "valid_rmse": valid_metrics["rmse"],
-                    "test_mae": test_metrics["mae"],
-                    "test_rmse": test_metrics["rmse"],
                 }
+                row.update(_build_result_row("valid", valid_metrics))
+                row.update(_build_result_row("test", test_metrics))
+
+                if hasattr(model, "best_epoch") and model.best_epoch is not None:
+                    row["best_epoch"] = int(model.best_epoch)
+                if hasattr(model, "best_valid_rmse") and model.best_valid_rmse is not None:
+                    row["tracked_best_valid_rmse"] = round(float(model.best_valid_rmse), 6)
+                if hasattr(model, "early_stopped"):
+                    row["early_stopped"] = bool(model.early_stopped)
+
                 results.append(row)
+
                 if valid_metrics["rmse"] < best_valid_rmse:
                     best_valid_rmse = valid_metrics["rmse"]
                     best_model = model

@@ -21,17 +21,53 @@ def _safe_float_series(series: pd.Series) -> pd.Series:
 
 def _compute_metrics(df: pd.DataFrame) -> Dict[str, float]:
     if len(df) == 0:
-        return {"mae": np.nan, "rmse": np.nan, "count": 0}
+        return {
+            "mae": np.nan,
+            "rmse": np.nan,
+            "exact_acc": np.nan,
+            "within_0_5_acc": np.nan,
+            "within_1_0_acc": np.nan,
+            "like_acc": np.nan,
+            "precision": np.nan,
+            "recall": np.nan,
+            "f1": np.nan,
+            "count": 0,
+        }
 
-    abs_error = (df["rating"] - df["prediction"]).abs()
-    sq_error = (df["rating"] - df["prediction"]) ** 2
+    y_true = df["rating"].astype(float).to_numpy()
+    y_pred = df["prediction"].astype(float).to_numpy()
 
-    mae = float(abs_error.mean())
-    rmse = float(np.sqrt(sq_error.mean()))
+    mae = float(np.mean(np.abs(y_true - y_pred)))
+    rmse = float(np.sqrt(np.mean((y_true - y_pred) ** 2)))
+
+    y_pred_round = np.rint(y_pred)
+    exact_acc = float(np.mean(y_pred_round == y_true))
+    within_0_5_acc = float(np.mean(np.abs(y_true - y_pred) <= 0.5))
+    within_1_0_acc = float(np.mean(np.abs(y_true - y_pred) <= 1.0))
+
+    y_true_bin = (y_true >= 4.0).astype(int)
+    y_pred_bin = (y_pred >= 4.0).astype(int)
+
+    tp = int(np.sum((y_true_bin == 1) & (y_pred_bin == 1)))
+    tn = int(np.sum((y_true_bin == 0) & (y_pred_bin == 0)))
+    fp = int(np.sum((y_true_bin == 0) & (y_pred_bin == 1)))
+    fn = int(np.sum((y_true_bin == 1) & (y_pred_bin == 0)))
+
+    like_acc = (tp + tn) / max(len(y_true_bin), 1)
+    precision = tp / max(tp + fp, 1)
+    recall = tp / max(tp + fn, 1)
+    f1 = 2 * precision * recall / max(precision + recall, 1e-12)
 
     return {
         "mae": round(mae, 6),
         "rmse": round(rmse, 6),
+        "exact_acc": round(exact_acc, 6),
+        "within_0_5_acc": round(within_0_5_acc, 6),
+        "within_1_0_acc": round(within_1_0_acc, 6),
+        "like_acc": round(float(like_acc), 6),
+        "precision": round(float(precision), 6),
+        "recall": round(float(recall), 6),
+        "f1": round(float(f1), 6),
         "count": int(len(df)),
     }
 
@@ -159,6 +195,13 @@ def evaluate_by_group(
                 "count": metrics["count"],
                 "mae": metrics["mae"],
                 "rmse": metrics["rmse"],
+                "exact_acc": metrics["exact_acc"],
+                "within_0_5_acc": metrics["within_0_5_acc"],
+                "within_1_0_acc": metrics["within_1_0_acc"],
+                "like_acc": metrics["like_acc"],
+                "precision": metrics["precision"],
+                "recall": metrics["recall"],
+                "f1": metrics["f1"],
             }
         )
     return pd.DataFrame(records)
@@ -269,6 +312,13 @@ def run_group_evaluation(
                 "count": overall_metrics["count"],
                 "mae": overall_metrics["mae"],
                 "rmse": overall_metrics["rmse"],
+                "exact_acc": overall_metrics["exact_acc"],
+                "within_0_5_acc": overall_metrics["within_0_5_acc"],
+                "within_1_0_acc": overall_metrics["within_1_0_acc"],
+                "like_acc": overall_metrics["like_acc"],
+                "precision": overall_metrics["precision"],
+                "recall": overall_metrics["recall"],
+                "f1": overall_metrics["f1"],
             }
         )
 
@@ -308,7 +358,9 @@ def generate_step3_markdown_report(
 ):
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    best_overall = overall_df.sort_values("rmse").iloc[0]
+    best_rmse = overall_df.sort_values("rmse").iloc[0]
+    best_exact = overall_df.sort_values("exact_acc", ascending=False).iloc[0]
+    best_like = overall_df.sort_values("f1", ascending=False).iloc[0]
 
     lines = [
         "# 第三步实验结论",
@@ -319,139 +371,36 @@ def generate_step3_markdown_report(
         "",
         "## 二、评价指标选择说明",
         "",
-        "- 本实验采用 **平均绝对误差（MAE）** 和 **均方根误差（RMSE）** 作为评分预测任务的主要评价指标。",
-        "- MAE 直接衡量预测值与真实评分之间的平均绝对偏差，结果易于解释。",
-        "- RMSE 对较大误差更敏感，因此更适合衡量模型对极端预测误差的控制能力。",
-        "- 在推荐系统评分预测实验中，同时报告 MAE 和 RMSE 能够更全面地反映模型性能。",
+        "- 本实验采用 **平均绝对误差（MAE）** 和 **均方根误差（RMSE）** 作为评分预测任务的主评价指标。",
+        "- 同时补充 **整数评分准确率（exact_acc）**、**±0.5 分容忍准确率**、**±1.0 分容忍准确率**，用于增强结果的直观性。",
+        "- 另外将“评分是否至少为 4 分”转化为喜欢/不喜欢二分类，补充 **like_acc / precision / recall / f1**。",
         "",
         "## 三、总体结果",
         "",
-        f"- 从测试集总体结果来看，均方根误差最优的模型为 **{best_overall['model']}**。",
-        f"- 其测试集平均绝对误差为 `{best_overall['mae']}`，测试集均方根误差为 `{best_overall['rmse']}`。",
+        f"- 从 **RMSE** 看，表现最好的模型为 **{best_rmse['model']}**，RMSE=`{best_rmse['rmse']}`，MAE=`{best_rmse['mae']}`。",
+        f"- 从 **整数评分准确率** 看，表现最好的模型为 **{best_exact['model']}**，exact_acc=`{best_exact['exact_acc']}`。",
+        f"- 从 **喜欢预测 F1** 看，表现最好的模型为 **{best_like['model']}**，F1=`{best_like['f1']}`。",
         "",
-        "## 四、不同层次分群分析",
+        "## 四、指标解读",
         "",
-        "### 1. 用户群体分析",
+        "- **MAE** 越小越好，表示平均每条评分预测偏差越小。",
+        "- **RMSE** 越小越好，对大误差更敏感，适合衡量模型对严重预测失误的控制能力。",
+        "- **exact_acc** 越大越好，表示预测值四舍五入后与真实整数评分完全一致的比例。",
+        "- **within_0_5_acc / within_1_0_acc** 越大越好，表示预测值落在可接受误差范围内的比例。",
+        "- **like_acc / precision / recall / f1** 越大越好，用于衡量模型对高分电影偏好的识别能力。",
+        "",
+        "## 五、分群分析说明",
+        "",
+        "- 分群结果表中已经同时保留 MAE、RMSE、exact_acc、within_0_5_acc、within_1_0_acc、like_acc、precision、recall、f1。",
+        "- 因此后续可以分别从“回归误差最小”与“高分偏好识别最好”两个角度分析不同群体上的模型差异。",
+        "",
+        "## 六、阶段结论",
+        "",
+        "- 对评分预测任务而言，**MAE 和 RMSE 仍应作为主指标**。",
+        "- 准确率类指标更适合作为辅助解释，帮助展示模型是否能把评分预测到正确等级附近。",
+        "- 如果更关注‘能不能识别用户喜欢的电影’，则应重点参考 like_acc、precision、recall 和 f1。",
         "",
     ]
-
-    if not user_group_df.empty:
-        user_group_types = user_group_df["group_type"].drop_duplicates().tolist()
-        user_section_idx = 1
-
-        for group_type in user_group_types:
-            subset = user_group_df[user_group_df["group_type"] == group_type].copy()
-            best_rows = subset.sort_values("rmse").groupby("group_value", as_index=False).first()
-
-            lines.append(f"#### 1.{user_section_idx} {group_type}")
-            lines.append("")
-
-            for row in best_rows.itertuples(index=False):
-                lines.append(
-                    f"- 在“{row.group_value}”中，表现最好的模型为 **{row.model}**，"
-                    f"平均绝对误差为 `{row.mae}`，均方根误差为 `{row.rmse}`。"
-                )
-
-            if group_type == "用户冷启动分组":
-                group_values = subset["group_value"].dropna().astype(str).unique().tolist()
-                if "冷启动用户" not in group_values:
-                    lines.append("")
-                    lines.append(
-                        "- 说明：当前实验采用随机划分方式，测试集中严格意义上的新用户样本较少，因此未形成明显的“冷启动用户”测试子集。"
-                    )
-
-            winner_counts = best_rows["model"].value_counts().to_dict()
-            if winner_counts:
-                summary_text = "；".join([f"{k} 获胜 {v} 次" for k, v in winner_counts.items()])
-                lines.append("")
-                lines.append(f"- 该分组下最佳模型分布：{summary_text}。")
-
-            lines.append("")
-            user_section_idx += 1
-
-    lines.extend(
-        [
-            "### 2. 电影群体分析",
-            "",
-        ]
-    )
-
-    if not item_group_df.empty:
-        item_group_types = item_group_df["group_type"].drop_duplicates().tolist()
-        item_section_idx = 1
-
-        for group_type in item_group_types:
-            subset = item_group_df[item_group_df["group_type"] == group_type].copy()
-            best_rows = subset.sort_values("rmse").groupby("group_value", as_index=False).first()
-
-            lines.append(f"#### 2.{item_section_idx} {group_type}")
-            lines.append("")
-
-            for row in best_rows.itertuples(index=False):
-                lines.append(
-                    f"- 在“{row.group_value}”中，表现最好的模型为 **{row.model}**，"
-                    f"平均绝对误差为 `{row.mae}`，均方根误差为 `{row.rmse}`。"
-                )
-
-            if group_type == "电影冷启动分组":
-                group_values = subset["group_value"].dropna().astype(str).unique().tolist()
-                if "冷启动电影" not in group_values:
-                    lines.append("")
-                    lines.append(
-                        "- 说明：当前实验采用随机划分方式，测试集中严格意义上的新电影样本较少，因此冷启动电影分析更多反映低交互电影的预测难度。"
-                    )
-
-            winner_counts = best_rows["model"].value_counts().to_dict()
-            if winner_counts:
-                summary_text = "；".join([f"{k} 获胜 {v} 次" for k, v in winner_counts.items()])
-                lines.append("")
-                lines.append(f"- 该分组下最佳模型分布：{summary_text}。")
-
-            lines.append("")
-            item_section_idx += 1
-
-    all_best_rows = []
-    if not user_group_df.empty:
-        for group_type in user_group_df["group_type"].drop_duplicates().tolist():
-            subset = user_group_df[user_group_df["group_type"] == group_type].copy()
-            best_rows = subset.sort_values("rmse").groupby("group_value", as_index=False).first()
-            all_best_rows.append(best_rows)
-
-    if not item_group_df.empty:
-        for group_type in item_group_df["group_type"].drop_duplicates().tolist():
-            subset = item_group_df[item_group_df["group_type"] == group_type].copy()
-            best_rows = subset.sort_values("rmse").groupby("group_value", as_index=False).first()
-            all_best_rows.append(best_rows)
-
-    lines.extend(
-        [
-            "## 五、结果讨论",
-            "",
-            "- 从总体结果看，最优模型并不一定在所有用户群体和电影群体中都保持领先。",
-            "- 分群评估表明，不同模型在不同数据子空间上的适应能力存在明显差异。",
-        ]
-    )
-
-    if all_best_rows:
-        merged_best = pd.concat(all_best_rows, ignore_index=True)
-        winner_counts = merged_best["model"].value_counts().to_dict()
-        summary_text = "；".join([f"{k} 获胜 {v} 次" for k, v in winner_counts.items()])
-        lines.append(f"- 综合所有分组后的最佳模型分布为：{summary_text}。")
-
-    lines.extend(
-        [
-            "- 例如，在部分年龄段用户、部分电影年代或中等热度电影中，图模型可能优于总体最优模型；而在其他群体中，矩阵分解或协同过滤方法表现更稳定。",
-            "- 这说明只看总体 MAE 和 RMSE 容易掩盖模型在局部群体上的优势与短板。",
-            "",
-            "## 六、阶段结论",
-            "",
-            "- 本阶段已经完成评价指标选择与不同层次分群分析，满足课程第三步要求。",
-            "- 实验结果表明，总体最优模型并不一定在所有用户群体和电影群体中都最优。",
-            "- 因此，推荐系统实验不能只依赖总体评价指标，还应结合用户层、用户群层和电影群层的表现共同判断模型优劣。",
-            "- 后续可以进一步结合时间划分、真实冷启动场景以及更丰富的排序评价指标，对模型进行更全面的分析。",
-            "",
-        ]
-    )
 
     report_path = output_dir / "第三步实验结论.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
