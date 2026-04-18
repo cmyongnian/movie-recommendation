@@ -15,6 +15,9 @@ class BiasMF:
         epochs: int = 20,
         seed: int = 42,
         verbose: bool = False,
+        patience: Optional[int] = 5,
+        min_delta: float = 0.0,
+        restore_best_weights: bool = True,
     ):
         self.name = f"BiasMF(factors={n_factors}, lr={lr}, reg={reg}, epochs={epochs})"
 
@@ -24,6 +27,9 @@ class BiasMF:
         self.epochs = epochs
         self.seed = seed
         self.verbose = verbose
+        self.patience = patience
+        self.min_delta = min_delta
+        self.restore_best_weights = restore_best_weights
 
         self.global_mean = 0.0
         self.user_to_idx: Dict[int, int] = {}
@@ -37,9 +43,31 @@ class BiasMF:
         self.Q: Optional[np.ndarray] = None
 
         self.history = []
+        self.best_epoch: Optional[int] = None
+        self.best_valid_rmse: Optional[float] = None
+        self.early_stopped: bool = False
+
+    def _make_state_dict(self) -> Dict[str, np.ndarray]:
+        return {
+            "bu": self.bu.copy(),
+            "bi": self.bi.copy(),
+            "P": self.P.copy(),
+            "Q": self.Q.copy(),
+        }
+
+    def _load_state_dict(self, state_dict: Dict[str, np.ndarray]):
+        self.bu = state_dict["bu"].copy()
+        self.bi = state_dict["bi"].copy()
+        self.P = state_dict["P"].copy()
+        self.Q = state_dict["Q"].copy()
 
     def fit(self, train_df: pd.DataFrame, valid_df: Optional[pd.DataFrame] = None):
         rng = np.random.default_rng(self.seed)
+
+        self.history = []
+        self.best_epoch = None
+        self.best_valid_rmse = None
+        self.early_stopped = False
 
         users = sorted(train_df["user_id"].unique().tolist())
         items = sorted(train_df["item_id"].unique().tolist())
@@ -68,6 +96,9 @@ class BiasMF:
             for row in train_df.itertuples(index=False)
         ]
 
+        best_state = None
+        no_improve_rounds = 0
+
         for epoch in range(1, self.epochs + 1):
             rng.shuffle(samples)
             train_sq_error = 0.0
@@ -87,7 +118,7 @@ class BiasMF:
                 self.P[u_idx] += self.lr * (err * qi_old - self.reg * pu_old)
                 self.Q[i_idx] += self.lr * (err * pu_old - self.reg * qi_old)
 
-            train_rmse = float(np.sqrt(train_sq_error / len(samples)))
+            train_rmse = float(np.sqrt(train_sq_error / max(len(samples), 1)))
 
             record = {
                 "epoch": epoch,
@@ -96,13 +127,47 @@ class BiasMF:
 
             if valid_df is not None:
                 valid_metrics = evaluate_model(self, valid_df)
+                current_valid_rmse = float(valid_metrics["rmse"])
                 record["valid_mae"] = valid_metrics["mae"]
                 record["valid_rmse"] = valid_metrics["rmse"]
+
+                improved = (
+                    self.best_valid_rmse is None
+                    or current_valid_rmse < self.best_valid_rmse - self.min_delta
+                )
+
+                if improved:
+                    self.best_valid_rmse = current_valid_rmse
+                    self.best_epoch = epoch
+                    best_state = self._make_state_dict()
+                    no_improve_rounds = 0
+                else:
+                    no_improve_rounds += 1
 
             self.history.append(record)
 
             if self.verbose:
                 print(record)
+
+            if (
+                valid_df is not None
+                and self.patience is not None
+                and no_improve_rounds >= self.patience
+            ):
+                self.early_stopped = True
+                if self.verbose:
+                    print(
+                        f"[BiasMF] early stopped at epoch {epoch}, "
+                        f"best epoch = {self.best_epoch}, "
+                        f"best valid_rmse = {self.best_valid_rmse:.6f}"
+                    )
+                break
+
+        if valid_df is not None and self.restore_best_weights and best_state is not None:
+            self._load_state_dict(best_state)
+
+        if valid_df is None:
+            self.best_epoch = len(self.history)
 
         return self
 
