@@ -37,7 +37,7 @@ from src.experiment import (
     sweep_svdpp,
     save_experiment_outputs,
 )
-from src.split import load_ratings, split_ratings
+from src.split import load_ratings, split_ratings, save_splits
 from src.graph_utils import infer_step1_feature_paths
 from src.gnn_feature import sweep_gnn_feature
 
@@ -62,25 +62,22 @@ def main():
     parser.add_argument("--train-ratio", type=float, default=默认训练集比例, help="训练集比例")
     parser.add_argument("--valid-ratio", type=float, default=默认验证集比例, help="验证集比例")
     parser.add_argument("--test-ratio", type=float, default=默认测试集比例, help="测试集比例")
+    parser.add_argument("--split-method", type=str, default="per_user", choices=["per_user", "global"], help="数据切分方式：per_user 更严谨，global 与旧版保持一致")
 
-    # ItemCF 参数
     parser.add_argument("--itemcf-k-list", type=str, default=",".join(map(str, 默认ItemCF邻居数列表)), help="ItemCF 邻居数列表，多个值用英文逗号分隔")
     parser.add_argument("--itemcf-sim-list", type=str, default=",".join(默认ItemCF相似度列表), help="ItemCF 相似度类型列表，多个值用英文逗号分隔")
     parser.add_argument("--itemcf-min-common", type=int, default=默认ItemCF最少共同评分数, help="ItemCF 最少共同评分数")
 
-    # BiasMF 参数
     parser.add_argument("--mf-factors-list", type=str, default=",".join(map(str, 默认MF隐向量维度列表)), help="BiasMF 隐向量维度列表，多个值用英文逗号分隔")
     parser.add_argument("--mf-lr-list", type=str, default=",".join(map(str, 默认MF学习率列表)), help="BiasMF 学习率列表，多个值用英文逗号分隔")
     parser.add_argument("--mf-reg-list", type=str, default=",".join(map(str, 默认MF正则化列表)), help="BiasMF 正则化参数列表，多个值用英文逗号分隔")
     parser.add_argument("--mf-epochs", type=int, default=默认MF训练轮数, help="BiasMF 训练轮数")
 
-    # SVD++ 参数
     parser.add_argument("--svdpp-factors-list", type=str, default=",".join(map(str, 默认SVDPP隐向量维度列表)), help="SVD++ 隐向量维度列表，多个值用英文逗号分隔")
     parser.add_argument("--svdpp-lr-list", type=str, default=",".join(map(str, 默认SVDPP学习率列表)), help="SVD++ 学习率列表，多个值用英文逗号分隔")
     parser.add_argument("--svdpp-reg-list", type=str, default=",".join(map(str, 默认SVDPP正则化列表)), help="SVD++ 正则化参数列表，多个值用英文逗号分隔")
     parser.add_argument("--svdpp-epochs", type=int, default=默认SVDPP训练轮数, help="SVD++ 训练轮数")
 
-    # GNN 参数
     parser.add_argument("--gnn-users-path", type=str, default="", help="第一步输出的用户特征文件路径，留空则自动根据 ratings-path 推断")
     parser.add_argument("--gnn-items-path", type=str, default="", help="第一步输出的电影特征文件路径，留空则自动根据 ratings-path 推断")
     parser.add_argument("--gnn-model-list", type=str, default=",".join(默认GNN模型列表), help="图模型列表，多个值用英文逗号分隔，可选 gcn, graphsage")
@@ -96,6 +93,7 @@ def main():
 
     ratings_path = Path(args.ratings_path)
     output_dir = Path(args.output_dir)
+    split_dir = output_dir / "splits"
 
     if args.gnn_users_path.strip():
         gnn_users_path = Path(args.gnn_users_path)
@@ -114,11 +112,16 @@ def main():
         valid_ratio=args.valid_ratio,
         test_ratio=args.test_ratio,
         seed=args.seed,
+        split_method=args.split_method,
     )
+    save_splits(train_df, valid_df, test_df, split_dir)
+
     print("数据集划分完成")
+    print(f"切分方式: {args.split_method}")
     print(f"训练集大小: {len(train_df)}")
     print(f"验证集大小: {len(valid_df)}")
     print(f"测试集大小: {len(test_df)}")
+    print(f"切分文件目录: {split_dir.resolve()}")
 
     baseline_results = run_baselines(train_df, valid_df, test_df)
     print("\n基线模型实验完成")
@@ -194,6 +197,9 @@ def main():
         "train_size": int(len(train_df)),
         "valid_size": int(len(valid_df)),
         "test_size": int(len(test_df)),
+        "split_method": args.split_method,
+        "split_dir": str(split_dir),
+        "seed": int(args.seed),
         "best_baseline": best_baseline,
         "best_itemcf": best_itemcf,
         "best_mf": best_mf,
@@ -211,8 +217,6 @@ def main():
     )
     gnn_results.to_csv(output_dir / "gnn_results.csv", index=False, encoding="utf-8-sig")
 
-    # 现有图表与 markdown 报告函数仍按 baseline / itemcf / mf 生成，
-    # 不影响 SVD++ 的训练、评估和 CSV/summary 输出。
     generate_all_experiment_figures(
         baseline_results=baseline_results,
         itemcf_results=itemcf_results,

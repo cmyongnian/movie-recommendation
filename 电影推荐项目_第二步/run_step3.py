@@ -2,7 +2,7 @@ import argparse
 import json
 from pathlib import Path
 
-from src.split import load_ratings, split_ratings
+from src.split import load_ratings, split_ratings, load_saved_splits
 from src.graph_utils import infer_step1_feature_paths, load_step1_feature_tables
 from src.group_eval import (
     train_step3_models,
@@ -28,10 +28,9 @@ def _load_step2_best_params(summary_path: Path, seed: int):
         "device": None,
     }
 
-    if not summary_path.exists():
-        return default_itemcf, default_mf, default_svdpp, default_gnn
-
-    summary = json.loads(summary_path.read_text(encoding="utf-8"))
+    summary = {}
+    if summary_path.exists():
+        summary = json.loads(summary_path.read_text(encoding="utf-8"))
 
     best_itemcf = summary.get("best_itemcf", {})
     itemcf_params = {
@@ -60,10 +59,7 @@ def _load_step2_best_params(summary_path: Path, seed: int):
 
     best_gnn = summary.get("best_gnn", {})
     gnn_model_name = str(best_gnn.get("model", "GCN")).strip().lower()
-    if gnn_model_name == "graphsage":
-        model_type = "graphsage"
-    else:
-        model_type = "gcn"
+    model_type = "graphsage" if gnn_model_name == "graphsage" else "gcn"
 
     gnn_params = {
         "model_type": model_type,
@@ -77,7 +73,9 @@ def _load_step2_best_params(summary_path: Path, seed: int):
         "device": None,
     }
 
-    return itemcf_params, mf_params, svdpp_params, gnn_params
+    split_method = str(summary.get("split_method", "per_user"))
+    split_dir = summary.get("split_dir", "output/splits")
+    return itemcf_params, mf_params, svdpp_params, gnn_params, split_method, split_dir
 
 
 def main():
@@ -86,11 +84,13 @@ def main():
     parser.add_argument("--users-path", type=str, default="", help="第一步输出的用户表路径，留空则自动推断")
     parser.add_argument("--items-path", type=str, default="", help="第一步输出的电影表路径，留空则自动推断")
     parser.add_argument("--summary-path", type=str, default="output/summary.json", help="第二步输出的 summary.json 路径")
+    parser.add_argument("--split-dir", type=str, default="", help="第二步保存的切分目录，默认优先从 summary.json 中读取")
     parser.add_argument("--output-dir", type=str, default="output_step3", help="第三步输出目录")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--train-ratio", type=float, default=0.8, help="训练集比例")
     parser.add_argument("--valid-ratio", type=float, default=0.1, help="验证集比例")
     parser.add_argument("--test-ratio", type=float, default=0.1, help="测试集比例")
+    parser.add_argument("--split-method", type=str, default="per_user", choices=["per_user", "global"], help="当找不到第二步切分文件时的回退切分方式")
     args = parser.parse_args()
 
     ratings_path = Path(args.ratings_path)
@@ -110,23 +110,37 @@ def main():
     ratings_df = load_ratings(ratings_path)
     users_df, items_df = load_step1_feature_tables(users_path, items_path)
 
-    train_df, valid_df, test_df = split_ratings(
-        ratings_df=ratings_df,
-        train_ratio=args.train_ratio,
-        valid_ratio=args.valid_ratio,
-        test_ratio=args.test_ratio,
-        seed=args.seed,
-    )
-
-    print("第三步数据集划分完成")
-    print(f"训练集大小: {len(train_df)}")
-    print(f"验证集大小: {len(valid_df)}")
-    print(f"测试集大小: {len(test_df)}")
-
-    itemcf_params, mf_params, svdpp_params, gnn_params = _load_step2_best_params(
+    itemcf_params, mf_params, svdpp_params, gnn_params, summary_split_method, summary_split_dir = _load_step2_best_params(
         summary_path=summary_path,
         seed=args.seed,
     )
+
+    if args.split_dir.strip():
+        split_dir = Path(args.split_dir)
+    else:
+        split_dir = Path(summary_split_dir)
+
+    if split_dir.exists() and (split_dir / "train.csv").exists():
+        train_df, valid_df, test_df = load_saved_splits(split_dir)
+        used_split_method = summary_split_method
+        print("已复用第二步保存的数据切分")
+    else:
+        used_split_method = args.split_method
+        train_df, valid_df, test_df = split_ratings(
+            ratings_df=ratings_df,
+            train_ratio=args.train_ratio,
+            valid_ratio=args.valid_ratio,
+            test_ratio=args.test_ratio,
+            seed=args.seed,
+            split_method=used_split_method,
+        )
+        print("未找到第二步切分文件，已按当前参数重新切分")
+
+    print("第三步数据集划分完成")
+    print(f"切分方式: {used_split_method}")
+    print(f"训练集大小: {len(train_df)}")
+    print(f"验证集大小: {len(valid_df)}")
+    print(f"测试集大小: {len(test_df)}")
 
     print("\n第三步将使用以下最优参数：")
     print(f"ItemCF: {itemcf_params}")
