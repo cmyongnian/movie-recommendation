@@ -33,16 +33,27 @@
     "test_mae": 0.734736,
     "test_rmse": 0.926227
   },
+  "best_svdpp": {
+    "model": "SVDPP",
+    "n_factors": 8,
+    "lr": 0.005,
+    "reg": 0.01,
+    "epochs": 20,
+    "valid_mae": 0.712967,
+    "valid_rmse": 0.909786,
+    "test_mae": 0.718941,
+    "test_rmse": 0.911388
+  },
   "best_gnn": {
     "model": "GCN",
     "hidden_dim": 64,
-    "num_layers": 2,
-    "lr": 0.005,
-    "weight_decay": 0.0001,
-    "epochs": 30,
-    "valid_mae": 0.736334,
-    "valid_rmse": 0.9322,
-    "test_mae": 0.742301,
-    "test_rmse": 0.934244
+    "num_layers": 1,
+    "lr": 0.003,
+    "weight_decay": 5e-05,
+    "epochs": 40,
+    "valid_mae": 0.729027,
+    "valid_rmse": 0.927108,
+    "test_mae": 0.732911,
+    "test_rmse": 0.927216
   }
 }

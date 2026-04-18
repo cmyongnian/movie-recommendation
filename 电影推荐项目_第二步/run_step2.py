@@ -218,7 +218,10 @@ def main():
         itemcf_results=itemcf_results,
         mf_results=mf_results,
         output_dir=output_dir,
+        gnn_results=gnn_results,
+        svdpp_results=svdpp_results,
     )
+
     generate_step2_markdown_report(
         output_dir=output_dir,
         baseline_results=baseline_results,
@@ -227,6 +230,8 @@ def main():
         train_size=len(train_df),
         valid_size=len(valid_df),
         test_size=len(test_df),
+        gnn_results=gnn_results,
+        svdpp_results=svdpp_results,
     )
 
     print("\n实验结果、参数分析图和实验结论已保存")

@@ -21,7 +21,6 @@ def 设置中文字体():
             plt.rcParams["font.sans-serif"] = [font]
             plt.rcParams["axes.unicode_minus"] = False
             return font
-
     plt.rcParams["axes.unicode_minus"] = False
     return None
 
@@ -39,6 +38,8 @@ def 规范模型名称(name: str) -> str:
         "ItemMean": "电影平均分",
         "ItemCF": "基于物品的协同过滤",
         "BiasMF": "带偏置矩阵分解",
+        "SVDpp": "SVD++",
+        "SVD++": "SVD++",
         "GCN": "图卷积网络",
         "GraphSAGE": "邻居聚合图网络",
     }
@@ -48,11 +49,22 @@ def 规范模型名称(name: str) -> str:
 def 尝试读取图模型结果(output_dir: Path, gnn_results):
     if gnn_results is not None:
         return gnn_results
-
     gnn_path = output_dir / "gnn_results.csv"
     if gnn_path.exists():
         try:
             return pd.read_csv(gnn_path)
+        except Exception:
+            return None
+    return None
+
+
+def 尝试读取SVDplusplus结果(output_dir: Path, svdpp_results):
+    if svdpp_results is not None:
+        return svdpp_results
+    svdpp_path = output_dir / "svdpp_results.csv"
+    if svdpp_path.exists():
+        try:
+            return pd.read_csv(svdpp_path)
         except Exception:
             return None
     return None
@@ -97,7 +109,6 @@ def 绘制协同过滤邻居数曲线(itemcf_results: pd.DataFrame, output_dir: 
         subset = subset.sort_values("k")
         相似度名称 = "余弦相似度" if sim == "cosine" else "皮尔逊相关系数"
         plt.plot(subset["k"], subset["test_rmse"], marker="o", label=相似度名称)
-
     plt.title("协同过滤不同邻居数下的测试集均方根误差")
     plt.xlabel("邻居数")
     plt.ylabel("均方根误差")
@@ -110,7 +121,6 @@ def 绘制协同过滤邻居数曲线(itemcf_results: pd.DataFrame, output_dir: 
         subset = subset.sort_values("k")
         相似度名称 = "余弦相似度" if sim == "cosine" else "皮尔逊相关系数"
         plt.plot(subset["k"], subset["test_mae"], marker="o", label=相似度名称)
-
     plt.title("协同过滤不同邻居数下的测试集平均绝对误差")
     plt.xlabel("邻居数")
     plt.ylabel("平均绝对误差")
@@ -131,7 +141,6 @@ def 绘制协同过滤相似度方法对比(itemcf_results: pd.DataFrame, output
         .groupby("sim_metric", as_index=False)
         .first()
     )
-
     best_rows["方法"] = best_rows["sim_metric"].map(
         lambda x: "余弦相似度" if x == "cosine" else "皮尔逊相关系数"
     )
@@ -188,6 +197,94 @@ def 绘制矩阵分解正则化曲线(mf_results: pd.DataFrame, output_dir: Path
     保存图像(fig_dir / "矩阵分解正则化系数测试集均方根误差曲线.png")
 
 
+def 绘制SVDplusplus隐向量维度曲线(svdpp_results: pd.DataFrame, output_dir: Path):
+    fig_dir = output_dir / "图像"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    if svdpp_results is None or svdpp_results.empty:
+        return
+
+    data = svdpp_results.copy()
+    grouped = (
+        data.groupby("n_factors", as_index=False)["test_rmse"]
+        .min()
+        .sort_values("n_factors")
+    )
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(grouped["n_factors"], grouped["test_rmse"], marker="o")
+    plt.title("SVD++不同隐向量维度下的最优测试集均方根误差")
+    plt.xlabel("隐向量维度")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "SVDplusplus隐向量维度测试集均方根误差曲线.png")
+
+
+def 绘制SVDplusplus正则化曲线(svdpp_results: pd.DataFrame, output_dir: Path):
+    fig_dir = output_dir / "图像"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    if svdpp_results is None or svdpp_results.empty:
+        return
+
+    data = svdpp_results.copy()
+    grouped = (
+        data.groupby("reg", as_index=False)["test_rmse"]
+        .min()
+        .sort_values("reg")
+    )
+
+    plt.figure(figsize=(8, 5))
+    plt.plot(grouped["reg"], grouped["test_rmse"], marker="o")
+    plt.title("SVD++不同正则化系数下的最优测试集均方根误差")
+    plt.xlabel("正则化系数")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "SVDplusplus正则化系数测试集均方根误差曲线.png")
+
+
+def 绘制矩阵分解家族对比图(
+    mf_results: pd.DataFrame,
+    output_dir: Path,
+    svdpp_results: pd.DataFrame = None,
+):
+    fig_dir = output_dir / "图像"
+    fig_dir.mkdir(parents=True, exist_ok=True)
+
+    if mf_results is None or mf_results.empty:
+        return
+
+    模型 = []
+    测试集均方根误差 = []
+    测试集平均绝对误差 = []
+
+    best_mf = mf_results.sort_values("valid_rmse").iloc[0]
+    模型.append("带偏置矩阵分解")
+    测试集均方根误差.append(float(best_mf["test_rmse"]))
+    测试集平均绝对误差.append(float(best_mf["test_mae"]))
+
+    if svdpp_results is not None and not svdpp_results.empty:
+        best_svdpp = svdpp_results.sort_values("valid_rmse").iloc[0]
+        模型.append("SVD++")
+        测试集均方根误差.append(float(best_svdpp["test_rmse"]))
+        测试集平均绝对误差.append(float(best_svdpp["test_mae"]))
+
+    if len(模型) <= 1:
+        return
+
+    plt.figure(figsize=(8, 5))
+    plt.bar(模型, 测试集均方根误差)
+    plt.title("矩阵分解家族最佳结果对比")
+    plt.xlabel("模型")
+    plt.ylabel("均方根误差")
+    保存图像(fig_dir / "矩阵分解家族最佳结果均方根误差对比.png")
+
+    plt.figure(figsize=(8, 5))
+    plt.bar(模型, 测试集平均绝对误差)
+    plt.title("矩阵分解家族最佳结果平均绝对误差对比")
+    plt.xlabel("模型")
+    plt.ylabel("平均绝对误差")
+    保存图像(fig_dir / "矩阵分解家族最佳结果平均绝对误差对比.png")
+
+
 def 绘制图神经网络隐藏维度曲线(gnn_results: pd.DataFrame, output_dir: Path):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -196,7 +293,6 @@ def 绘制图神经网络隐藏维度曲线(gnn_results: pd.DataFrame, output_di
         return
 
     data = gnn_results.copy()
-
     grouped = (
         data.groupby("hidden_dim", as_index=False)["test_rmse"]
         .min()
@@ -219,7 +315,6 @@ def 绘制图神经网络学习率曲线(gnn_results: pd.DataFrame, output_dir: 
         return
 
     data = gnn_results.copy()
-
     grouped = (
         data.groupby("lr", as_index=False)["test_rmse"]
         .min()
@@ -242,7 +337,6 @@ def 绘制图神经网络权重衰减曲线(gnn_results: pd.DataFrame, output_di
         return
 
     data = gnn_results.copy()
-
     grouped = (
         data.groupby("weight_decay", as_index=False)["test_rmse"]
         .min()
@@ -270,7 +364,6 @@ def 绘制图神经网络模型对比(gnn_results: pd.DataFrame, output_dir: Pat
         .groupby("model", as_index=False)
         .first()
     )
-
     best_rows["模型"] = best_rows["model"].map(规范模型名称)
 
     plt.figure(figsize=(8, 5))
@@ -287,6 +380,7 @@ def 绘制最优模型总体对比(
     mf_results: pd.DataFrame,
     output_dir: Path,
     gnn_results: pd.DataFrame = None,
+    svdpp_results: pd.DataFrame = None,
 ):
     fig_dir = output_dir / "图像"
     fig_dir.mkdir(parents=True, exist_ok=True)
@@ -311,20 +405,26 @@ def 绘制最优模型总体对比(
         float(best_mf["test_mae"]),
     ]
 
+    if svdpp_results is not None and not svdpp_results.empty:
+        best_svdpp = svdpp_results.sort_values("valid_rmse").iloc[0]
+        模型.append("SVD++")
+        测试集均方根误差.append(float(best_svdpp["test_rmse"]))
+        测试集平均绝对误差.append(float(best_svdpp["test_mae"]))
+
     if gnn_results is not None and not gnn_results.empty:
         best_gnn = gnn_results.sort_values("valid_rmse").iloc[0]
         模型.append(规范模型名称(best_gnn["model"]))
         测试集均方根误差.append(float(best_gnn["test_rmse"]))
         测试集平均绝对误差.append(float(best_gnn["test_mae"]))
 
-    plt.figure(figsize=(9, 5))
+    plt.figure(figsize=(10, 5))
     plt.bar(模型, 测试集均方根误差)
     plt.title("最优模型测试集均方根误差对比")
     plt.xlabel("模型")
     plt.ylabel("均方根误差")
     保存图像(fig_dir / "最优模型测试集均方根误差对比.png")
 
-    plt.figure(figsize=(9, 5))
+    plt.figure(figsize=(10, 5))
     plt.bar(模型, 测试集平均绝对误差)
     plt.title("最优模型测试集平均绝对误差对比")
     plt.xlabel("模型")
@@ -338,17 +438,28 @@ def generate_all_experiment_figures(
     mf_results: pd.DataFrame,
     output_dir: Path,
     gnn_results: pd.DataFrame = None,
+    svdpp_results: pd.DataFrame = None,
 ):
     output_dir = Path(output_dir)
     设置中文字体()
 
     gnn_results = 尝试读取图模型结果(output_dir, gnn_results)
+    svdpp_results = 尝试读取SVDplusplus结果(output_dir, svdpp_results)
 
     绘制基线模型对比图(baseline_results, output_dir)
     绘制协同过滤邻居数曲线(itemcf_results, output_dir)
     绘制协同过滤相似度方法对比(itemcf_results, output_dir)
     绘制矩阵分解隐向量维度曲线(mf_results, output_dir)
     绘制矩阵分解正则化曲线(mf_results, output_dir)
+
+    if svdpp_results is not None and not svdpp_results.empty:
+        绘制SVDplusplus隐向量维度曲线(svdpp_results, output_dir)
+        绘制SVDplusplus正则化曲线(svdpp_results, output_dir)
+        绘制矩阵分解家族对比图(
+            mf_results=mf_results,
+            output_dir=output_dir,
+            svdpp_results=svdpp_results,
+        )
 
     if gnn_results is not None and not gnn_results.empty:
         绘制图神经网络隐藏维度曲线(gnn_results, output_dir)
@@ -362,4 +473,5 @@ def generate_all_experiment_figures(
         mf_results=mf_results,
         output_dir=output_dir,
         gnn_results=gnn_results,
+        svdpp_results=svdpp_results,
     )
