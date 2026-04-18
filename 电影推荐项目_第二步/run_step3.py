@@ -13,37 +13,14 @@ from src.visualize_step3 import generate_step3_figures
 
 def main():
     parser = argparse.ArgumentParser(description="电影推荐项目第三步：评价指标选择与分群分析")
-
-    parser.add_argument(
-        "--ratings-path",
-        type=str,
-        default="../电影推荐项目_第一步/output/数据/评分表_预处理后.csv",
-        help="第一步输出的评分表路径",
-    )
-    parser.add_argument(
-        "--users-path",
-        type=str,
-        default="",
-        help="第一步输出的用户表路径，留空则自动推断",
-    )
-    parser.add_argument(
-        "--items-path",
-        type=str,
-        default="",
-        help="第一步输出的电影表路径，留空则自动推断",
-    )
-    parser.add_argument(
-        "--output-dir",
-        type=str,
-        default="output_step3",
-        help="第三步输出目录",
-    )
-
+    parser.add_argument("--ratings-path", type=str, default="../电影推荐项目_第一步/output/数据/评分表_预处理后.csv", help="第一步输出的评分表路径")
+    parser.add_argument("--users-path", type=str, default="", help="第一步输出的用户表路径，留空则自动推断")
+    parser.add_argument("--items-path", type=str, default="", help="第一步输出的电影表路径，留空则自动推断")
+    parser.add_argument("--output-dir", type=str, default="output_step3", help="第三步输出目录")
     parser.add_argument("--seed", type=int, default=42, help="随机种子")
     parser.add_argument("--train-ratio", type=float, default=0.8, help="训练集比例")
     parser.add_argument("--valid-ratio", type=float, default=0.1, help="验证集比例")
     parser.add_argument("--test-ratio", type=float, default=0.1, help="测试集比例")
-
     args = parser.parse_args()
 
     ratings_path = Path(args.ratings_path)
@@ -75,21 +52,9 @@ def main():
     print(f"验证集大小: {len(valid_df)}")
     print(f"测试集大小: {len(test_df)}")
 
-    # 第二步中已验证的较优参数
-    itemcf_params = {
-        "k": 80,
-        "sim_metric": "cosine",
-        "min_common": 2,
-    }
-
-    mf_params = {
-        "n_factors": 32,
-        "lr": 0.005,
-        "reg": 0.05,
-        "epochs": 20,
-        "seed": args.seed,
-    }
-
+    itemcf_params = {"k": 80, "sim_metric": "cosine", "min_common": 2}
+    mf_params = {"n_factors": 32, "lr": 0.005, "reg": 0.05, "epochs": 20, "seed": args.seed}
+    svdpp_params = {"n_factors": 32, "lr": 0.005, "reg": 0.05, "epochs": 20, "seed": args.seed}
     gnn_params = {
         "model_type": "gcn",
         "hidden_dim": 64,
@@ -110,6 +75,7 @@ def main():
         items_df=items_df,
         itemcf_params=itemcf_params,
         mf_params=mf_params,
+        svdpp_params=svdpp_params,
         gnn_params=gnn_params,
     )
 
@@ -122,7 +88,6 @@ def main():
     )
 
     output_dir.mkdir(parents=True, exist_ok=True)
-
     overall_df.to_csv(output_dir / "overall_results.csv", index=False, encoding="utf-8-sig")
     user_group_df.to_csv(output_dir / "user_group_results.csv", index=False, encoding="utf-8-sig")
     item_group_df.to_csv(output_dir / "item_group_results.csv", index=False, encoding="utf-8-sig")
@@ -133,7 +98,6 @@ def main():
         item_group_df=item_group_df,
         output_dir=output_dir,
     )
-
     generate_step3_markdown_report(
         output_dir=output_dir,
         overall_df=overall_df,
@@ -143,7 +107,6 @@ def main():
 
     print("\n第三步总体结果：")
     print(overall_df)
-
     print("\n第三步结果已保存")
     print(f"输出目录: {output_dir.resolve()}")
 
