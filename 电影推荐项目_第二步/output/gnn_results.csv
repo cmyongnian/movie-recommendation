@@ -1,2 +1,2 @@
 ﻿model,hidden_dim,num_layers,lr,weight_decay,epochs,valid_mae,valid_rmse,test_mae,test_rmse
-GCN,64,1,0.003,5e-05,40,0.729027,0.927108,0.732911,0.927216
+GCN,64,1,0.003,5e-05,40,0.728632,0.927227,0.732645,0.928802

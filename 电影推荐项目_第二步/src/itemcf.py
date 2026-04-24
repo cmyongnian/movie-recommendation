@@ -13,38 +13,70 @@ class ItemCF:
         k: int = 20,
         sim_metric: str = "cosine",
         min_common: int = 2,
+        shrinkage: float = 10.0,
+        use_bias_baseline: bool = True,
     ):
         if sim_metric not in {"cosine", "pearson"}:
             raise ValueError("sim_metric 只能是 'cosine' 或 'pearson'")
+        if shrinkage < 0:
+            raise ValueError("shrinkage 不能小于 0")
 
-        self.name = f"ItemCF(k={k}, sim={sim_metric}, min_common={min_common})"
+        self.name = (
+            f"ItemCF(k={k}, sim={sim_metric}, min_common={min_common}, "
+            f"shrinkage={shrinkage})"
+        )
         self.k = k
         self.sim_metric = sim_metric
         self.min_common = min_common
+        self.shrinkage = float(shrinkage)
+        self.use_bias_baseline = use_bias_baseline
 
         self.global_mean = 0.0
         self.user_mean: Dict[int, float] = {}
         self.item_mean: Dict[int, float] = {}
+        self.user_bias: Dict[int, float] = {}
+        self.item_bias: Dict[int, float] = {}
+
         self.user_history: Dict[int, Dict[int, float]] = {}
         self.similarity: Dict[int, Dict[int, float]] = {}
+        self.co_count: Dict[int, Dict[int, int]] = {}
 
     def fit(self, train_df: pd.DataFrame):
         self.global_mean = float(train_df["rating"].mean())
         self.user_mean = train_df.groupby("user_id")["rating"].mean().to_dict()
         self.item_mean = train_df.groupby("item_id")["rating"].mean().to_dict()
 
+        self.user_bias = {
+            int(user_id): float(mean_rating - self.global_mean)
+            for user_id, mean_rating in self.user_mean.items()
+        }
+        self.item_bias = {
+            int(item_id): float(mean_rating - self.global_mean)
+            for item_id, mean_rating in self.item_mean.items()
+        }
+
         self.user_history = defaultdict(dict)
         for row in train_df.itertuples(index=False):
             self.user_history[int(row.user_id)][int(row.item_id)] = float(row.rating)
 
-        self.similarity = self._build_similarity(train_df)
+        self.similarity, self.co_count = self._build_similarity(train_df)
         return self
 
-    def _build_similarity(self, train_df: pd.DataFrame) -> Dict[int, Dict[int, float]]:
-        pair_stats: Dict[Tuple[int, int], list] = defaultdict(lambda: [0, 0.0, 0.0, 0.0, 0.0, 0.0])
+    def _build_similarity(
+        self, train_df: pd.DataFrame
+    ) -> Tuple[Dict[int, Dict[int, float]], Dict[int, Dict[int, int]]]:
+        # stat = [n, sum_x, sum_y, sum_x2, sum_y2, sum_xy]
+        pair_stats: Dict[Tuple[int, int], list] = defaultdict(
+            lambda: [0, 0.0, 0.0, 0.0, 0.0, 0.0]
+        )
 
         for _, group in train_df.groupby("user_id"):
-            items = list(zip(group["item_id"].astype(int).tolist(), group["rating"].astype(float).tolist()))
+            items = list(
+                zip(
+                    group["item_id"].astype(int).tolist(),
+                    group["rating"].astype(float).tolist(),
+                )
+            )
             n_items = len(items)
 
             if n_items < 2:
@@ -70,6 +102,7 @@ class ItemCF:
                     stat[5] += x * y
 
         similarity = defaultdict(dict)
+        co_count = defaultdict(dict)
 
         for (item_i, item_j), stat in pair_stats.items():
             n, sum_x, sum_y, sum_x2, sum_y2, sum_xy = stat
@@ -79,21 +112,42 @@ class ItemCF:
 
             if self.sim_metric == "cosine":
                 denom = sqrt(sum_x2) * sqrt(sum_y2)
-                sim = 0.0 if denom == 0 else sum_xy / denom
+                raw_sim = 0.0 if denom == 0 else sum_xy / denom
             else:
                 numerator = sum_xy - (sum_x * sum_y / n)
                 denom_x = sum_x2 - (sum_x ** 2 / n)
                 denom_y = sum_y2 - (sum_y ** 2 / n)
                 denom = sqrt(max(denom_x, 0.0)) * sqrt(max(denom_y, 0.0))
-                sim = 0.0 if denom == 0 else numerator / denom
+                raw_sim = 0.0 if denom == 0 else numerator / denom
+
+            if raw_sim == 0:
+                continue
+
+            # significance weighting / shrinkage
+            # 共现次数越少，相似度越要打折
+            if self.shrinkage > 0:
+                weight = n / (n + self.shrinkage)
+                sim = raw_sim * weight
+            else:
+                sim = raw_sim
 
             if sim != 0:
                 similarity[item_i][item_j] = sim
                 similarity[item_j][item_i] = sim
+                co_count[item_i][item_j] = n
+                co_count[item_j][item_i] = n
 
-        return similarity
+        return similarity, co_count
+
+    def _bias_baseline(self, user_id: int, item_id: int) -> float:
+        pred = self.global_mean
+        pred += self.user_bias.get(user_id, 0.0)
+        pred += self.item_bias.get(item_id, 0.0)
+        return pred
 
     def _fallback_predict(self, user_id: int, item_id: int) -> float:
+        if self.use_bias_baseline:
+            return clip_rating(self._bias_baseline(user_id, item_id))
         if item_id in self.item_mean:
             return clip_rating(self.item_mean[item_id])
         if user_id in self.user_mean:
@@ -108,11 +162,19 @@ class ItemCF:
         if not rated_items:
             return self._fallback_predict(user_id, item_id)
 
-        baseline = self.item_mean.get(item_id, self.user_mean.get(user_id, self.global_mean))
+        target_sims = self.similarity.get(item_id, {})
+        if not target_sims:
+            return self._fallback_predict(user_id, item_id)
+
+        if self.use_bias_baseline:
+            baseline = self._bias_baseline(user_id, item_id)
+        else:
+            baseline = self.item_mean.get(
+                item_id,
+                self.user_mean.get(user_id, self.global_mean),
+            )
 
         neighbors = []
-        target_sims = self.similarity.get(item_id, {})
-
         for neighbor_item, rating in rated_items.items():
             sim = target_sims.get(neighbor_item)
             if sim is None:
@@ -128,7 +190,11 @@ class ItemCF:
         denominator = 0.0
 
         for neighbor_item, sim, rating in neighbors:
-            neighbor_baseline = self.item_mean.get(neighbor_item, self.global_mean)
+            if self.use_bias_baseline:
+                neighbor_baseline = self._bias_baseline(user_id, neighbor_item)
+            else:
+                neighbor_baseline = self.item_mean.get(neighbor_item, self.global_mean)
+
             numerator += sim * (rating - neighbor_baseline)
             denominator += abs(sim)
 
